@@ -44,6 +44,11 @@ Internet
     |
     +---> S3 (images, COCO dataset files, MLflow artifacts, SQLite backups)
 
+Observability (NOT AWS — separate cloud, §10)
+    Both EC2s + training export OTLP wide events --> secured OTLP endpoint
+        --> Hetzner CAX21 (ARM): self-hosted SigNoz (ClickHouse-backed)
+            firewall: OTLP ports open only to the AWS egress IP + admin IP
+
 ECR (Docker image registries)
     |-- terra-vigil-backend:latest
     +-- cv-model-serving:latest        [built by mlflow models build-docker]
@@ -78,6 +83,12 @@ GitHub Actions (CI/CD)
 **Estimated total: ~$18–25/mo** (less with free tier). The v1 estimate of ~$10–15/mo
 omitted MLflow compute entirely; the dedicated MLflow EC2 + its EBS add ~$8–9/mo. SQLite
 still avoids RDS cost (~$15–30/mo saved) for both databases.
+
+> **Observability is off-AWS (§10).** The deployed SigNoz backend runs on a **Hetzner
+> CAX21** (ARM, ~€6.49/mo), not AWS — a deliberate multicloud choice. It is **not** in the
+> table above because it is not an AWS service; it is provisioned by the same Terraform via
+> the `hcloud` provider ([PLAN.md](./PLAN.md) I8). Canonical telemetry contract:
+> [../contracts/observability.md](../contracts/observability.md).
 
 > **S3 layout note.** Whether the above S3 line items are **prefixes in one bucket** or
 > **separate buckets** is still open (§4). The training repo registers a concrete `s3_uri`
@@ -128,6 +139,11 @@ Options for the pull/restart step: direct SSH/SSM command, or docker-compose on 
 - IAM instance role for S3 access (no hardcoded access keys)
 - GitHub Actions uses OIDC federation for AWS auth
 - Application-level JWT auth (shared password in env var or Secrets Manager)
+- **Observability OTLP endpoint (off-AWS):** the deployed SigNoz exposes a public OTLP
+  endpoint (4317/4318) on the Hetzner box. Harden it: **TLS + bearer-token auth** on the
+  exporter, and a **firewall locked to the AWS egress IP** (+ admin IP for the UI). Token
+  in Secrets Manager / env, never committed. This is the one genuine new attack surface the
+  multicloud choice introduces (§10 / [PLAN.md](./PLAN.md) I8).
 
 ### SSL/TLS
 - CloudFront handles HTTPS for frontend automatically
@@ -270,3 +286,37 @@ Requirements:
 - **Entrypoint:** the thin "pull data → train → log to MLflow → shutdown" wrapper
   ([../training/PLAN.md](../training/PLAN.md) §9).
 - **Cost:** est. ~$2–6/run.
+
+---
+
+## 10. Observability backend — multicloud (Hetzner), Terraform-provisioned
+
+The deployed observability backend (self-hosted **SigNoz**, ClickHouse-backed) runs **off
+AWS, on Hetzner** — a deliberate multicloud choice. The canonical telemetry contract is
+[../contracts/observability.md](../contracts/observability.md); the actionable infra delta
+is [PLAN.md](./PLAN.md) **I8**.
+
+### Why off-AWS (the cost logic is counterintuitive)
+SigNoz needs **4GB RAM minimum, 8GB comfortable** (ClickHouse OOMs at 2GB). Against that:
+- **GCP/Azure free tiers are 1GB → they OOM**; their cheapest *viable* boxes cost
+  **$24–60/mo** (GCP e2-medium ~$24, Azure B2ms ~$60) — the *priciest* options.
+- A **second AWS box** (Lightsail 4GB $24 / EC2 t3.medium ~$30) **blows the whole project
+  budget** by itself.
+- **Hetzner CAX21** (ARM, 4 vCPU / 8GB, NVMe, 20TB traffic) = **~€6.49/mo**, reliable, and
+  has an **official Terraform provider** (`hcloud`). *(Oracle Always Free A1 is $0 but has
+  signup capacity-hunting + idle-reclaim risk on a demo box; rejected for reliability.)*
+
+So the cheap, reliable, Terraform-native path is **off-AWS**.
+
+### Cross-cloud is fine at this volume
+- **Egress ≈ $0.** AWS gives 100GB/mo egress free, then $0.09/GB; a portfolio app's OTLP
+  volume is far under that. The classic "cross-cloud egress will kill you" warning does
+  **not** apply here.
+- **Latency:** OTLP export is async/batched — cross-cloud RTT is irrelevant.
+- **The real cost** is securing a public OTLP endpoint (§4 Security) — modest, and itself a
+  good infra-as-code/security artifact.
+
+### Terraform shape
+Multi-provider config (`provider "aws"` + `provider "hcloud"`), or split state if you
+prefer isolation. One `terraform apply` provisions the AWS ML system **and** its
+self-hosted observability backend on a second cloud, wired over a firewalled OTLP endpoint.

@@ -103,6 +103,7 @@ writes to the registry.
 | Real-time | WebSocket | Run progress only |
 | CI/CD | GitHub Actions | Lint + test on PR, deploy on merge |
 | Container | Docker | Backend image pushed to ECR |
+| Observability | OpenTelemetry → OTLP → SigNoz | Wide events (one fat span per unit of work); trace propagated into serving — see [../contracts/observability.md](../contracts/observability.md) |
 
 ---
 
@@ -195,6 +196,34 @@ in UI.
 
 ---
 
+## 9b. Observability — wide events & trace propagation
+
+Operational observability is a **first-class concern**, governed by the cross-repo contract
+[../contracts/observability.md](../contracts/observability.md) (do not restate the schema
+here; field registry: [../contracts/observability.attributes.yaml](../contracts/observability.attributes.yaml)).
+
+- **One wide event per unit of work.** FastAPI middleware opens a root span per **HTTP
+  request**; dedicated spans wrap each **WebSocket "run"**, each **outbound inference call**,
+  and each **categorization pass**. Each carries the canonical fields + its `camtrap.*`
+  domain fields (e.g. a run carries `camtrap.run.id`, `camtrap.model.version`,
+  `camtrap.dataset.version`; categorization carries `camtrap.error.type`,
+  `camtrap.category.id`). High-cardinality ids (`camtrap.image.id`, `camtrap.location.id`)
+  go on attributes, never metric labels.
+- **Trace propagation into serving (required).** Every outbound inference call **injects the
+  W3C `traceparent`** so the serving invocation joins the run's trace. Net effect: a whole
+  run — request → run → every inference → categorization — is **one trace**, answering
+  questions like *"in run X, group failures by camera `location_id` where the model was
+  confidently wrong"* from one store.
+- **MLflow boundary.** These events are **operational** (latency, counts, status); ML
+  metrics stay in MLflow. They join on shared keys (`camtrap.model.version`,
+  `camtrap.dataset.version`, `git_sha`) but never duplicate payload.
+- **Sink by env only.** Same emit code everywhere; `OTEL_EXPORTER_OTLP_ENDPOINT` points at
+  local SigNoz (docker-compose) or the deployed SigNoz on Hetzner — see the contract's Sinks
+  table and [../infra/PLAN.md](../infra/PLAN.md) I8.
+- **Enforcement.** A typed (Pydantic-backed) emit helper imports field names from the
+  registry; CI asserts required-field presence. Validate loud in dev / fail CI; never let
+  telemetry crash prod.
+
 ## 10. API Design
 
 Backend-first: write FastAPI endpoints with Pydantic models, auto-generate
@@ -254,6 +283,7 @@ terra-vigil/
 | 17 | Model promotion via registry **aliases**, not stages | Stages are removed in MLflow 3.x; alias is the source of truth — contract: [../contracts/model-registry.md](../contracts/model-registry.md) |
 | 18 | Bounding boxes stored `xyxy` end-to-end | Matches YOLO output + IoU math; one format avoids per-comparison conversion bugs; GT converted once on ingest — contract: [../contracts/bbox-format.md](../contracts/bbox-format.md) |
 | 19 | Pinned pyfunc serving contract | Stateless, S3-decoupled serving; pyfunc translates YOLO index → COCO id so predictions join the `Category` table directly — contract: [../contracts/serving-io.md](../contracts/serving-io.md) |
+| 20 | Operational observability via OTel wide events | One fat span per unit of work; `traceparent` propagated into serving so a run is one cross-repo trace; SigNoz backend (local always-on, deployed on Hetzner); vendor-neutral OTLP keeps Honeycomb as a one-env fallback — contract: [../contracts/observability.md](../contracts/observability.md) |
 
 ---
 

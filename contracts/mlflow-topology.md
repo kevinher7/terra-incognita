@@ -49,6 +49,14 @@ serving image and redeploying the container — **OSS MLflow has no native regis
 webhooks**, so this is triggered by a manual `workflow_dispatch` or a
 `repository_dispatch` from the training job, never by MLflow itself.
 
+### Boundary with operational telemetry
+
+MLflow owns **ML metrics** (mAP, per-class AP, loss curves, run params). It does **not**
+own operational telemetry (request/run/inference latency, exit reasons, counts) — those are
+**wide events** under [observability.md](./observability.md). The two share keys
+(`dataset_version`, `model_version`, `git_sha`) and join across systems, but never duplicate
+payload. Do not log operational latency into MLflow; do not log ML metrics into wide events.
+
 ## Depended on by
 
 - **infra** (`Terraform` repo) — provisions the dedicated MLflow EC2 + EBS,
