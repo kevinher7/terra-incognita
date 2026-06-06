@@ -95,6 +95,33 @@ All buckets private.
 
 ---
 
+## I8 — Self-hosted SigNoz observability backend (Hetzner, Terraform) 🔧
+
+Every runtime exports OTLP wide events to a self-hosted **SigNoz** backend. Local is SigNoz
+in docker-compose; **deployed is SigNoz on Hetzner** — off-AWS, a deliberate multicloud
+choice (cost rationale + cross-cloud analysis: [`CONTEXT.md`](./CONTEXT.md) §10). Canonical
+telemetry contract: [../contracts/observability.md](../contracts/observability.md).
+
+**Required.** Provision the deployed SigNoz via the **`hcloud` Terraform provider** in the
+same repo (multi-provider config, or split state):
+- **`hcloud_server`** — a **CAX21** (ARM, 4 vCPU / 8GB, NVMe) with **cloud-init** to install
+  Docker and bring up the SigNoz compose stack on first boot.
+- **`hcloud_volume`** — NVMe data volume for ClickHouse (retention-capped; a few GB at this
+  volume).
+- **`hcloud_firewall`** — open OTLP ports (4317/4318) **only to the AWS egress IP**, and the
+  SigNoz UI port only to the admin IP. **TLS + bearer-token** on the OTLP exporter (token in
+  Secrets Manager / env, never committed) — see [`CONTEXT.md`](./CONTEXT.md) §4 Security.
+- **Config handoff:** supply `OTEL_EXPORTER_OTLP_ENDPOINT` + auth token to the dashboard
+  EC2, the serving container, and training, exactly as the tracking URI is supplied. Local
+  vs deployed differ by **this env value only** — same emit code (contract parity rule).
+
+**Cost impact to record.** +~€6.49/mo (Hetzner CAX21). Cheaper *and* more reliable than any
+AWS-resident option (a second AWS box is $24–30/mo); GCP/Azure free tiers OOM. Cross-cloud
+egress ≈ $0 at this volume. **Fallback:** OTLP is vendor-neutral — the deployed sink can be
+swapped to the **Honeycomb free tier** with one env-var change, no code change.
+
+---
+
 ## Open / deferred
 
 ### I7 — Transient GPU training compute ⏳
@@ -129,4 +156,5 @@ p3.2xlarge), provisioned for a run and terminated after. Requirements:
 | I4 | 🔧 gap | Second ECR repo + build/push/deploy path for the serving image. |
 | I5 | ✅ decision | Serving runtime IAM ≈ none (base64 + baked-in model). |
 | I6 | 🔧 gap | Enumerate S3: images + COCO datasets + MLflow artifact store. |
+| I8 | 🔧 gap | Self-hosted SigNoz on Hetzner (`hcloud`); firewall OTLP to AWS IP; +€6.49/mo. |
 | I7 | ⏳ deferred | Transient GPU spot module (S3 r/w + tracking reach). |

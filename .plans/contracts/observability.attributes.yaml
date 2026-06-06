@@ -1,0 +1,135 @@
+# Observability attribute registry — the machine-readable companion to
+# observability.md. This is the SINGLE SOURCE OF TRUTH for wide-event field
+# names, types, required/optional status, and cardinality.
+#
+# Consumed by: the typed emit helper in each repo (Pydantic-backed in Python) and
+# the CI schema test that asserts required-field presence. Markdown prose:
+# observability.md. To change a field, change it HERE and in the prose contract.
+#
+# cardinality: high  -> many distinct values; OK as a span attribute, NEVER a metric label.
+#              low   -> few distinct values; safe as a metric label too.
+# required:    true  -> fail CI / validate-loud-in-dev if absent (never fatal in prod; drop/warn).
+
+schema_version: 1
+
+# ---------------------------------------------------------------------------
+# Canonical fields — present on EVERY wide event (root span), all runtimes.
+# ---------------------------------------------------------------------------
+canonical:
+  - name: environment
+    type: enum            # local | prod
+    required: true
+    cardinality: low
+    note: Selects the sink by env; never branches emit code.
+  - name: service.name
+    type: string          # OTel semconv: terra-vigil-backend | cv-model-serving | terra-incognita-training
+    required: true
+    cardinality: low
+  - name: git_sha
+    type: string
+    required: true
+    cardinality: high
+    note: Provenance; join key to the deployed/trained artifact and to MLflow.
+  - name: trace_id
+    type: string          # supplied by OTel
+    required: true
+    cardinality: high
+    note: Cross-boundary join key (W3C traceparent propagation).
+  - name: span_id
+    type: string          # supplied by OTel
+    required: true
+    cardinality: high
+
+# ---------------------------------------------------------------------------
+# Domain fields — camtrap.* namespace. Attached per unit-of-work type (see the
+# `events` section for which are required where). Use OTel semconv (http.*,
+# service.*) for non-domain concerns rather than redefining them here.
+# ---------------------------------------------------------------------------
+domain:
+  - name: camtrap.run.id
+    type: string
+    cardinality: high
+    note: The dashboard "run" — the trace root that fans out into inference calls.
+  - name: camtrap.model.name
+    type: string
+    cardinality: low
+  - name: camtrap.model.version
+    type: string
+    cardinality: high
+    note: Shared key with MLflow; never duplicate MLflow metrics onto the event.
+  - name: camtrap.model.alias
+    type: string          # e.g. champion | challenger
+    cardinality: low
+  - name: camtrap.dataset.version
+    type: string
+    cardinality: high
+    note: Shared key with MLflow and the dataset registry.
+  - name: camtrap.image.id
+    type: string
+    cardinality: high
+  - name: camtrap.location.id
+    type: int             # 140 cameras in CCT
+    cardinality: high
+  - name: camtrap.category.id
+    type: int             # 22 categories (COCO id)
+    cardinality: low
+  - name: camtrap.error.type
+    type: enum            # one of the 6 error-categorization types
+    cardinality: low
+  - name: camtrap.detections.count
+    type: int
+    cardinality: low
+  - name: camtrap.confidence
+    type: float
+    cardinality: high
+  - name: camtrap.device
+    type: enum            # mps | cuda | cpu
+    cardinality: low
+  - name: camtrap.instance_type
+    type: string          # training provenance (e.g. local-mps, g4dn.xlarge)
+    cardinality: low
+  - name: camtrap.exit_reason
+    type: enum            # completed | error | spot_interrupted
+    cardinality: low
+  - name: camtrap.spot_interrupted
+    type: bool
+    cardinality: low
+  - name: camtrap.duration_ms
+    type: float           # operational latency; NOT an MLflow metric
+    cardinality: high
+  - name: camtrap.s3.bytes
+    type: int
+    cardinality: high
+
+# ---------------------------------------------------------------------------
+# Events — the committed unit-of-work types and which domain fields each requires.
+# Open set: a new event type is added here against the same pattern (no prose
+# contract change needed). Frontend RUM is deferred (post-MVP), so absent here.
+# ---------------------------------------------------------------------------
+events:
+  # --- dashboard backend (terra-vigil) ---
+  - name: dashboard.http_request
+    runtime: dashboard-backend
+    requires: []          # canonical fields + OTel http.* semconv
+  - name: dashboard.run
+    runtime: dashboard-backend
+    requires: [camtrap.run.id, camtrap.model.version, camtrap.dataset.version]
+  - name: dashboard.inference_call
+    runtime: dashboard-backend
+    requires: [camtrap.run.id, camtrap.image.id, camtrap.model.version, camtrap.duration_ms]
+    note: Outbound call to serving; MUST inject W3C traceparent.
+  - name: dashboard.categorization
+    runtime: dashboard-backend
+    requires: [camtrap.run.id, camtrap.error.type, camtrap.category.id]
+
+  # --- serving container (pyfunc) ---
+  - name: serving.inference
+    runtime: serving
+    requires: [camtrap.model.name, camtrap.model.version, camtrap.detections.count, camtrap.device, camtrap.duration_ms]
+    note: Continues the propagated trace from dashboard.inference_call.
+
+  # --- training job (terra-incognita) ---
+  - name: training.run
+    runtime: training
+    requires: [camtrap.dataset.version, camtrap.device, camtrap.instance_type, camtrap.exit_reason]
+    note: Operational lifecycle only. ML metrics live in MLflow (shared keys, no overlap).

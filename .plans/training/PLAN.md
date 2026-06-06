@@ -84,6 +84,9 @@ in both places. floci has nothing to do with ML; it's purely the local S3.
   with pinned env + params.
 - **Config** via env + a typed config object (paths, S3, tracking URI, hyperparams);
   **nothing hardcoded** — this is what makes local/GPU parity free.
+- **OpenTelemetry** for operational wide events (§6b) — OTLP to local SigNoz vs the deployed
+  SigNoz on Hetzner, selected by `OTEL_EXPORTER_OTLP_ENDPOINT` (same env-parity pattern as
+  the tracking URI). Contract: [../contracts/observability.md](../contracts/observability.md).
 
 ---
 
@@ -125,6 +128,26 @@ generalization). None block us; the model is meant to be imperfect.
   are not bit-identical — acceptable (accuracy is a non-goal).
 - **Data input:** training **materializes the dataset from its `s3_uri`** into the local
   YOLO layout (not a hardcoded path), so local and GPU runs are identical.
+
+---
+
+## 6b. Operational observability (wide events) — distinct from MLflow
+
+The training job emits **one operational wide event** for the run lifecycle (the
+`training.run` event), governed by [../contracts/observability.md](../contracts/observability.md).
+This is **separate from MLflow** and must not duplicate it:
+
+- **Wide event = operational lifecycle:** data-pull seconds (`camtrap.s3.bytes`,
+  `camtrap.duration_ms`), epochs, `camtrap.exit_reason` (completed | error |
+  spot_interrupted), `camtrap.device`, `camtrap.instance_type`. Child spans optional for
+  data-pull / train / register.
+- **MLflow = ML metrics** (mAP, per-class AP, loss) via Ultralytics autolog (§6), **plus**
+  the provenance tags. The two **share keys** (`camtrap.dataset.version`,
+  `camtrap.model.version`, `git_sha`) so a run joins across both — but **no payload overlap**
+  (never log mAP into the event; never log pull-time into MLflow).
+- **Why both:** MLflow answers *"how good was this model?"*; wide events answer *"did the run
+  succeed, how long did each phase take, did spot get yanked?"* — and, via shared keys, you
+  can pivot between them.
 
 ---
 
@@ -252,6 +275,10 @@ Est. ~$2–6/run.
   fixture smoke pipeline). MLflow in CI uses a **tmp SQLite backend + tmp local artifact
   dir** (no server needed); an **optional floci service container** can exercise the real
   S3 artifact path. Mirrors the dashboard's CI style (see [../infra/CONTEXT.md](../infra/CONTEXT.md) §6).
+- **Wide-event schema test:** the smoke run asserts the `training.run` event carries its
+  required fields per [../contracts/observability.attributes.yaml](../contracts/observability.attributes.yaml)
+  (validate loud / fail CI; never fatal in prod). CI uses an in-memory OTel span exporter —
+  no SigNoz needed.
 
 ---
 
@@ -272,13 +299,16 @@ Est. ~$2–6/run.
 - **Serving container** allocated compute on the MLflow EC2 and a **second ECR repo +
   deploy path** for the serving image.
 - **GPU spot EC2** (deferred) per §9.
+- **Observability backend** — training must reach the OTLP endpoint
+  (`OTEL_EXPORTER_OTLP_ENDPOINT` + auth token), env-supplied exactly like the tracking URI.
+  Deployed backend is self-hosted SigNoz on Hetzner ([../infra/PLAN.md](../infra/PLAN.md) I8).
 
 ---
 
 ## 12. Open items
 
 - ⏳ S3 bucket/prefix scheme (with infra; see [../infra/CONTEXT.md](../infra/CONTEXT.md) §3/§4).
-- ⏳ Concrete tracking-server + serving-endpoint URLs (config-supplied).
+- ⏳ Concrete tracking-server + serving-endpoint + OTLP-endpoint URLs (config-supplied).
 - ⏳ Whether spot checkpoint-resume is worth implementing for the short nano runs.
 
 ---
@@ -286,10 +316,12 @@ Est. ~$2–6/run.
 ## 13. Suggested implementation phases (for the future plan)
 
 1. **Scaffold:** uv project, src layout, ruff, justfile, Typer skeleton, MLproject, config.
-2. **Local MLflow stack:** docker-compose (mlflow server + floci), bucket bootstrap, env wiring.
+2. **Local stack:** docker-compose (mlflow server + floci + **always-on SigNoz**), bucket
+   bootstrap, env wiring (incl. `OTEL_EXPORTER_OTLP_ENDPOINT`).
 3. **Fixtures + COCO→YOLO converter** + unit tests (the math is the riskiest pure logic).
 4. **Dataset pipeline:** subset sampler, S3 upload, `datasets`-experiment registration.
-5. **Training:** device-agnostic Ultralytics + autolog hybrid + provenance tags.
+5. **Training:** device-agnostic Ultralytics + autolog hybrid + provenance tags + the
+   `training.run` operational wide event (§6b), via the typed OTel helper.
 6. **Packaging + serving:** pyfunc wrapper (base64 in / xyxy + category_id out), signature,
    index→category_id map, `build-docker`, `@champion` alias.
 7. **Smoke pipeline end-to-end** on fixtures; wire GitHub Actions.
