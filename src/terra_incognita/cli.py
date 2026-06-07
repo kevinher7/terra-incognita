@@ -194,16 +194,26 @@ def train(
     )
 
 
+# `package` and `serve` drive the mlflow CLI against the ml stack (build-docker / models serve),
+# so — like `upload`/`register-dataset` — the real path is a `just` recipe, not this lean command
+# (no mlflow/ultralytics import, so it stays in the CI sync). The pyfunc they package is the real
+# `CCTDetector` (scripts/serving_pyfunc.py); its pure logic lives in `terra_incognita.serving`.
 @app.command()
 def package() -> None:
-    """Package the trained model as an mlflow.pyfunc and register @champion."""
-    _todo("package")
+    """Build the byte-identical serving image (model baked in) via `mlflow models build-docker`."""
+    typer.echo(
+        "[stub] 'package' runs via the ml stack — use `just package` "
+        "(needs Docker + `just sync-ml`; builds the @champion serving image)."
+    )
 
 
 @app.command()
 def serve() -> None:
     """Serve the @champion model via `mlflow models serve` (REST)."""
-    _todo("serve")
+    typer.echo(
+        "[stub] 'serve' runs via the ml stack — use `just serve` "
+        "(needs `just up` + `just sync-ml`); round-trip it with `just serve-smoke`."
+    )
 
 
 @app.command()

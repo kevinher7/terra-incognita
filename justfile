@@ -54,11 +54,14 @@ register-dataset:
 train config="configs/baseline.yaml":
     uv run terra-incognita train --config {{config}}
 
-package:
-    uv run terra-incognita package
+package image="cct-detector-serving":
+    uv run --extra ml mlflow models build-docker -m "models:/cct-detector@champion" -n {{image}}
 
-serve:
-    uv run terra-incognita serve
+# Serve the @champion pyfunc over REST (base64 image in / xyxy + COCO id out). Locally we run
+# in the current env (`--env-manager local`) for a fast dev loop; the byte-identical deployed
+# path is `just package` (build-docker). POST base64 records to http://localhost:<port>/invocations.
+serve port="5001":
+    uv run --extra ml mlflow models serve -m "models:/cct-detector@champion" -p {{port}} --env-manager local
 
 smoke:
     uv run terra-incognita smoke
@@ -112,3 +115,9 @@ dataset-smoke:
 # provenance + signature + architecture, and emit the training.run wide event (slice 5).
 train-smoke:
     uv run --extra ml python scripts/train_smoke.py
+
+# Serving round-trip acceptance smoke (needs `just up` + `just sync-ml`): produce a @champion,
+# load it via the registry alias, and round-trip a base64 image through the real CCTDetector —
+# asserting xyxy absolute-pixel boxes, the real COCO category_id join key, and conf honored (slice 6).
+serve-smoke:
+    uv run --extra ml python scripts/serve_smoke.py
