@@ -106,3 +106,9 @@ stack-smoke:
 # upload it to floci S3, register it in the `datasets` experiment, and verify the round-trip.
 dataset-smoke:
     uv run --extra ml python scripts/dataset_smoke.py
+
+# Training acceptance smoke (needs `just up` + `just sync-ml`): materialize a dataset from its
+# s3_uri, 1-epoch device-agnostic train with MLflow autolog, register a @champion model with
+# provenance + signature + architecture, and emit the training.run wide event (slice 5).
+train-smoke:
+    uv run --extra ml python scripts/train_smoke.py
