@@ -14,6 +14,7 @@ import typer
 
 from terra_incognita.config import Device as ConfigDevice
 from terra_incognita.config import Settings
+from terra_incognita.data import CocoDataset, convert_coco_to_yolo, split_by_fraction
 from terra_incognita.experiment import ExperimentConfig, load_experiment_config
 from terra_incognita.obs import TrainingRunEvent, configure_tracing, emit_event
 from terra_incognita.obs.events import Device, ExitReason
@@ -52,9 +53,34 @@ def subset(
 
 
 @app.command()
-def convert() -> None:
-    """Convert COCO annotations to the Ultralytics YOLO layout."""
-    _todo("convert")
+def convert(
+    coco: Annotated[Path, typer.Option(help="COCO annotations JSON to convert.")],
+    images: Annotated[Path, typer.Option(help="Directory holding the source images.")],
+    out: Annotated[Path, typer.Option(help="Output dir for the Ultralytics layout.")],
+    val_fraction: Annotated[
+        float, typer.Option(help="Placeholder split: fraction of images to val.")
+    ] = 0.2,
+    seed: Annotated[int, typer.Option(help="Seed for the placeholder split.")] = 42,
+) -> None:
+    """Convert COCO annotations to the Ultralytics YOLO layout.
+
+    The split here is the *placeholder* fraction split (``split_by_fraction``); the real
+    location-disjoint split is the subset step's job (PLAN §5.3). The converter itself is
+    policy-free — it just honors the split it's handed.
+    """
+    dataset = CocoDataset.from_path(coco)
+    image_splits = split_by_fraction([img.id for img in dataset.images], val_fraction, seed)
+    result = convert_coco_to_yolo(dataset, images, out, image_splits)
+    typer.echo(
+        f"converted {result.num_annotations} annotations across {result.num_images} images "
+        f"({result.num_categories} classes) -> {result.output_dir}"
+    )
+    typer.echo(
+        f"  images/labels per split: {result.images_per_split} | "
+        f"empty={result.num_empty_images} out_of_bounds={result.num_out_of_bounds}"
+    )
+    typer.echo(f"  data.yaml: {result.data_yaml_path}")
+    typer.echo(f"  index->category_id map: {result.category_map_path}")
 
 
 @app.command()

@@ -31,6 +31,11 @@ dev = [
     "ruff>=0.5",
     "ty>=0.0.1",
     "pytest>=8",
+    # Test-only: the synthetic fixture generator draws shape-on-noise images (PLAN §10).
+    # Pillow alone covers it — Image.effect_noise for the background, ImageDraw for the
+    # shapes — so we avoid pulling numpy into the lean CI core+dev sync. The real ML stack
+    # (`--extra ml`) already includes Pillow transitively via ultralytics.
+    "pillow>=10.3",
 ]
 
 [build-system]
