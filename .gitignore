@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# uv / venv
+.venv/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# project data & artifacts (never commit datasets/weights — they live in S3)
+/data/
+/artifacts/
+/mlruns/
+/mlartifacts/
+
+# OS / editor
+.DS_Store

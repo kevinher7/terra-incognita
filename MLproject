@@ -1,0 +1,36 @@
+name: terra-incognita
+
+python_env: python_env.yaml
+
+entry_points:
+  download:
+    command: "terra-incognita download"
+
+  subset:
+    parameters:
+      seed: {type: int, default: 42}
+    command: "terra-incognita subset"
+
+  convert:
+    command: "terra-incognita convert"
+
+  upload:
+    command: "terra-incognita upload"
+
+  register-dataset:
+    command: "terra-incognita register-dataset"
+
+  train:
+    parameters:
+      epochs: {type: int, default: 50}
+      imgsz: {type: int, default: 640}
+      batch: {type: int, default: 16}
+      seed: {type: int, default: 42}
+      device: {type: str, default: "auto"}
+    command: "terra-incognita train"
+
+  package:
+    command: "terra-incognita package"
+
+  main:
+    command: "terra-incognita smoke"

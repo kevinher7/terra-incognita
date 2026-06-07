@@ -1,0 +1,9 @@
+# Pinned env for `mlflow run` (referenced by MLproject). MLflow builds a virtualenv
+# from this; we install the project itself with the `ml` extra so torch/ultralytics
+# resolve per the platform-routed wheels in pyproject.toml.
+python: "3.12"
+build_dependencies:
+  - uv
+  - pip
+dependencies:
+  - ".[ml]"
