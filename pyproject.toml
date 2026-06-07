@@ -1,0 +1,88 @@
+[project]
+name = "terra-incognita"
+version = "0.1.0"
+description = "Camera-trap failure-mode CV training pipeline (MLflow tracking + OTel wide events)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
+    "opentelemetry-api>=1.25",
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
+]
+
+[project.optional-dependencies]
+ml = [
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "ultralytics>=8.2",
+    "mlflow>=3.1",
+]
+
+[project.scripts]
+terra-incognita = "terra_incognita.cli:app"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.5",
+    "ty>=0.0.1",
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/terra_incognita"]
+
+# ---------------------------------------------------------------------------
+# Torch wheel parity. The PyTorch project ships platform-specific
+# wheels from dedicated indexes, not PyPI. We route by platform marker:
+#   - macOS (darwin): the CPU index — these wheels include Apple MPS support.
+#   - Linux: the CUDA cu124 index — the GPU spot box gets CUDA with zero code change.
+# `explicit = true` means these indexes are used ONLY for the packages pinned to
+# them below (they never shadow PyPI for everything else).
+# ---------------------------------------------------------------------------
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
+    { index = "pytorch-cu124", marker = "sys_platform == 'linux'" },
+]
+torchvision = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
+    { index = "pytorch-cu124", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests don't need return-type annotations on every test function.
+"tests/**" = ["ANN201", "ANN001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

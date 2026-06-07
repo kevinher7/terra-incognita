@@ -1,0 +1,42 @@
+name: CI
+
+# The gate every feature slice lands behind (issue #1): uv sync -> ruff -> pytest.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      # Core + dev groups only (no `--extra ml`): CI stays lean and fast. --frozen
+      # asserts uv.lock is in sync with pyproject.toml.
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Type check (ty)
+        run: uv run ty check
+
+      - name: Test (pytest)
+        run: uv run pytest

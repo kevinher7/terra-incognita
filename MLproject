@@ -1,0 +1,36 @@
+name: terra-incognita
+
+python_env: python_env.yaml
+
+entry_points:
+  download:
+    command: "terra-incognita download"
+
+  subset:
+    parameters:
+      seed: {type: int, default: 42}
+    command: "terra-incognita subset"
+
+  convert:
+    command: "terra-incognita convert"
+
+  upload:
+    command: "terra-incognita upload"
+
+  register-dataset:
+    command: "terra-incognita register-dataset"
+
+  # An experiment is a committed config file, not a pile of -P hyperparameters: the
+  # reproducible surface is `mlflow run . -e train -P config=configs/<name>.yaml`. The
+  # hyperparameters live in that file (validated by ExperimentConfig); device/tracking
+  # come from the environment (Settings), so the same command reproduces on any machine.
+  train:
+    parameters:
+      config: {type: path, default: "configs/baseline.yaml"}
+    command: "terra-incognita train --config {config}"
+
+  package:
+    command: "terra-incognita package"
+
+  main:
+    command: "terra-incognita smoke"
