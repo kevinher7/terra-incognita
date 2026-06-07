@@ -10,25 +10,31 @@ from pydantic import ValidationError
 
 from terra_incognita.cli import build_demo_training_run_event
 from terra_incognita.config import Device, Environment, Settings
+from terra_incognita.experiment import ExperimentConfig
 from terra_incognita.obs import emit_event
 from terra_incognita.obs.events import TrainingRunEvent
 from terra_incognita.obs.registry import load_registry
 
 
 def _settings() -> Settings:
-    # Construct explicitly (no env dependence) so the test is hermetic.
+    # Construct explicitly (no env dependence) so the test is hermetic. Note: runtime/
+    # provenance only — hyperparameters now live in ExperimentConfig (see _experiment).
     return Settings(
         environment=Environment.local,
         service_name="terra-incognita-training",
         git_sha="abc1234",
         device=Device.mps,
         instance_type="local-mps",
-        dataset_version="ds-2026-06-07",
     )
 
 
+def _experiment() -> ExperimentConfig:
+    # dataset_version is part of the experiment (what data), not the environment.
+    return ExperimentConfig(dataset_version="ds-2026-06-07")
+
+
 def test_demo_event_carries_required_fields(span_exporter: InMemorySpanExporter, tracer: Tracer):
-    event = build_demo_training_run_event(_settings())
+    event = build_demo_training_run_event(_settings(), _experiment())
     result = emit_event(event, tracer=tracer, environment="local")
 
     spans = span_exporter.get_finished_spans()

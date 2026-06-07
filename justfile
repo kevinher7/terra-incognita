@@ -48,8 +48,9 @@ upload:
 register-dataset:
     uv run terra-incognita register-dataset
 
-train:
-    uv run terra-incognita train
+# Train from a versioned experiment config (an experiment is a file, not env state).
+train config="configs/baseline.yaml":
+    uv run terra-incognita train --config {{config}}
 
 package:
     uv run terra-incognita package

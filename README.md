@@ -17,7 +17,8 @@ behind a green CI gate.
 
 | Piece | Where |
 |---|---|
-| Typed config (env-driven, nothing hardcoded) | `src/terra_incognita/config.py` |
+| Environment/parity config (env-driven: tracking URI, S3, OTLP, device) | `src/terra_incognita/config.py` |
+| Experiment config (versioned hyperparameters, one file per experiment) | `src/terra_incognita/experiment.py` + `configs/*.yaml` |
 | Typed OTel wide-event helper (Pydantic-backed) | `src/terra_incognita/obs/` |
 | CLI (one stub per pipeline step + `demo-event`) | `src/terra_incognita/cli.py` |
 | Reproducible step wrapper | `MLproject` + `python_env.yaml` |
@@ -39,3 +40,22 @@ just sync-ml       # add the heavy ML stack (torch/ultralytics/mlflow) for later
 Copy [`.env.example`](./.env.example) to `.env` for local config. Torch wheels are
 platform-routed (macOS → MPS-capable CPU wheels, Linux → CUDA cu124) in
 `pyproject.toml` so the same project installs on a laptop and the GPU box unchanged.
+
+### Config split: environment vs experiment
+
+Two config surfaces, separated by one question — *"does this differ between my laptop and
+the GPU box for the **same** experiment?"*
+
+- **Yes → environment/parity.** Tracking URI, S3 endpoint, OTLP endpoint, credentials,
+  `device`, `instance_type`. These come from env vars / `.env` (`Settings`, `config.py`).
+- **No → it defines the experiment.** `epochs`, `imgsz`, `batch`, `seed`, `model_arch`,
+  `dataset_version`. These live in a **committed** `configs/*.yaml` (`ExperimentConfig`),
+  so an experiment is a diffable file you point at — never an edit to ambient `.env` state:
+
+  ```sh
+  mlflow run . -e train -P config=configs/baseline.yaml   # reproducible surface
+  uv run terra-incognita train --config configs/baseline.yaml --epochs 3   # ad-hoc override
+  ```
+
+  Define a new experiment by **copying** `configs/baseline.yaml`, not by editing `.env`.
+  Unknown/typo'd keys in a config fail loudly.

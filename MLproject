@@ -20,14 +20,14 @@ entry_points:
   register-dataset:
     command: "terra-incognita register-dataset"
 
+  # An experiment is a committed config file, not a pile of -P hyperparameters: the
+  # reproducible surface is `mlflow run . -e train -P config=configs/<name>.yaml`. The
+  # hyperparameters live in that file (validated by ExperimentConfig); device/tracking
+  # come from the environment (Settings), so the same command reproduces on any machine.
   train:
     parameters:
-      epochs: {type: int, default: 50}
-      imgsz: {type: int, default: 640}
-      batch: {type: int, default: 16}
-      seed: {type: int, default: 42}
-      device: {type: str, default: "auto"}
-    command: "terra-incognita train"
+      config: {type: path, default: "configs/baseline.yaml"}
+    command: "terra-incognita train --config {config}"
 
   package:
     command: "terra-incognita package"

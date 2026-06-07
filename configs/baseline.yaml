@@ -1,0 +1,18 @@
+# An experiment IS this file — committed, diffable, and pointed at explicitly:
+#   mlflow run . -e train -P config=configs/baseline.yaml
+#   just train                      # uses this file by default
+#
+# To define a new experiment, COPY this file (e.g. configs/yolo11n_highres.yaml) and edit
+# the copy. Never edit .env to change an experiment: .env holds environment/parity values
+# (tracking URI, S3 endpoint, OTLP, device) that are the SAME experiment on a different
+# machine — see .env.example. Keys here are validated against ExperimentConfig
+# (extra keys / typos fail loudly).
+
+model_arch: yolov8n.pt   # deliberately nano + weak — the dashboard needs failure modes
+epochs: 50
+imgsz: 640
+batch: 16
+seed: 42
+
+# Pin once the dataset version is registered (datasets-experiment convention).
+dataset_version: null

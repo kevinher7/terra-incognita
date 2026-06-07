@@ -7,12 +7,19 @@ proving the observability path end to end. Later slices fill in each stub.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Annotated
+
 import typer
 
 from terra_incognita.config import Device as ConfigDevice
 from terra_incognita.config import Settings
+from terra_incognita.experiment import ExperimentConfig, load_experiment_config
 from terra_incognita.obs import TrainingRunEvent, configure_tracing, emit_event
 from terra_incognita.obs.events import Device, ExitReason
+
+# The default experiment when none is named — a committed file, never ambient env state.
+DEFAULT_CONFIG = Path("configs/baseline.yaml")
 
 app = typer.Typer(
     name="terra-incognita",
@@ -35,9 +42,13 @@ def download() -> None:
 
 
 @app.command()
-def subset() -> None:
+def subset(
+    seed: Annotated[int, typer.Option(help="Seed for the one-time stratified sampling.")] = 42,
+) -> None:
     """Build the seeded, location-split stratified subset (~5-10K images)."""
-    _todo("subset")
+    # `seed` is a data-pipeline input (it fixes the one-time subset), distinct from the
+    # training seed in ExperimentConfig — hence a plain CLI option, not the experiment file.
+    typer.echo(f"[stub] 'subset' (seed={seed}) is not implemented yet (scaffold slice 1).")
 
 
 @app.command()
@@ -60,8 +71,27 @@ def register_dataset() -> None:
 
 # --- training / serving (PLAN §6/§7) ----------------------------------------
 @app.command()
-def train() -> None:
-    """Train the device-agnostic Ultralytics model and log to MLflow."""
+def train(
+    config: Annotated[
+        Path,
+        typer.Option(help="Experiment config YAML — the reproducible unit of an experiment."),
+    ] = DEFAULT_CONFIG,
+    epochs: Annotated[int | None, typer.Option(help="Override config epochs (ad-hoc).")] = None,
+    imgsz: Annotated[int | None, typer.Option(help="Override config imgsz (ad-hoc).")] = None,
+    batch: Annotated[int | None, typer.Option(help="Override config batch (ad-hoc).")] = None,
+    seed: Annotated[int | None, typer.Option(help="Override config seed (ad-hoc).")] = None,
+) -> None:
+    """Train the device-agnostic Ultralytics model and log to MLflow.
+
+    The experiment is defined by ``--config`` (a committed ``configs/*.yaml``); the
+    ``--override`` flags are an ad-hoc convenience for quick probes. Environment/parity
+    (device, tracking URI, S3) comes from :class:`Settings`. Slice 1 loads + echoes the
+    resolved experiment to prove the config path; the train loop lands in a later slice.
+    """
+    settings = Settings()
+    experiment = load_experiment_config(config, epochs=epochs, imgsz=imgsz, batch=batch, seed=seed)
+    typer.echo(f"resolved experiment from {config}: {experiment.as_mlflow_params()}")
+    typer.echo(f"runtime: device={settings.device.value} instance={settings.instance_type}")
     _todo("train")
 
 
@@ -84,11 +114,16 @@ def smoke() -> None:
 
 
 # --- observability vertical (the slice-1 testable path) ----------------------
-def build_demo_training_run_event(settings: Settings) -> TrainingRunEvent:
-    """Map config into a placeholder ``training.run`` event.
+def build_demo_training_run_event(
+    settings: Settings, experiment: ExperimentConfig
+) -> TrainingRunEvent:
+    """Map runtime config + experiment into a placeholder ``training.run`` event.
 
     Pure (no I/O) so the acceptance test can build the same event it asserts on. The
-    operational values are stand-ins; a real run fills them from the run lifecycle.
+    operational values are stand-ins; a real run fills them from the run lifecycle. Note
+    the shared join key ``dataset_version`` comes from the *experiment* (what data), while
+    ``device``/``instance_type`` come from *settings* (where it ran) — the same split the
+    config refactor enforces.
     """
     # The event enum has no `auto` — that's a runtime hint, not an emitted value. For
     # the demo we resolve `auto` to `cpu` (a real run records the device actually used).
@@ -97,7 +132,7 @@ def build_demo_training_run_event(settings: Settings) -> TrainingRunEvent:
         environment=settings.environment,
         service_name=settings.service_name,
         git_sha=settings.git_sha,
-        dataset_version=settings.dataset_version or "demo-dataset",
+        dataset_version=experiment.dataset_version or "demo-dataset",
         device=device,
         instance_type=settings.instance_type,
         exit_reason=ExitReason.completed,
@@ -113,7 +148,9 @@ def demo_event() -> None:
         settings.service_name,
         otlp_endpoint=settings.otel_exporter_otlp_endpoint,
     )
-    event = build_demo_training_run_event(settings)
+    # Defaults are fine for the observability smoke — it exercises the event path, not a
+    # real experiment, so it never needs configs/baseline.yaml to exist.
+    event = build_demo_training_run_event(settings, ExperimentConfig())
     result = emit_event(event, environment=settings.environment.value)
     typer.echo(
         f"emitted '{result.event_name}' wide event "

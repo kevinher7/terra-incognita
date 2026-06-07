@@ -112,15 +112,14 @@ class Settings(BaseSettings):
         ),
     )
 
-    # --- training hyperparameters / provenance --------------------------------
+    # --- runtime / provenance -------------------------------------------------
+    # These are *environment* concerns, not experiment definition: `device` is whatever the
+    # current machine offers (auto -> mps/cuda/cpu) and `instance_type` is where it ran.
+    # The experiment hyperparameters (epochs, imgsz, batch, seed, model_arch,
+    # dataset_version) deliberately live in a versioned config file instead — see
+    # `terra_incognita.experiment.ExperimentConfig` and `configs/*.yaml`.
     device: Device = Device.auto
     instance_type: str = "local-mps"  # provenance tag: local-mps | g4dn.xlarge | ...
-    model_arch: str = "yolov8n.pt"
-    epochs: int = 50
-    imgsz: int = 640
-    batch: int = 16
-    seed: int = 42
-    dataset_version: str | None = None
 
     # --- observability registry -----------------------------------------------
     # Override only for tests/odd layouts; defaults to the vendored .plans/ mirror.
