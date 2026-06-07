@@ -1,0 +1,81 @@
+# Local stack for the training repo: MLflow tracking server + floci (local S3).
+#
+# Parity principle (PLAN §2): local and deployed differ ONLY by env values, never by code.
+#   - floci here  <-> real AWS S3 in prod   (swapped via MLFLOW_S3_ENDPOINT_URL)
+#   - this mlflow <-> EC2 mlflow in prod     (swapped via MLFLOW_TRACKING_URI)
+# Inside this network, services reach each other by service name (floci:4566); host-run
+# training code uses the localhost:* values in .env. Nothing hardcoded in Python (Settings).
+#
+# SigNoz — the always-on wide-event sink — is NOT here: it runs from its own pinned, vendored
+# official compose so we get true local/prod parity with the Hetzner deploy (infra I8). See
+# `just up`, which brings up this stack AND that one.
+
+name: terra-incognita
+
+services:
+  # Local AWS S3 API. `latest-compat` bundles the AWS CLI so the ready.d bootstrap hook can
+  # create buckets, and ships curl for the healthcheck. S3-only here: no Docker-socket mount
+  # (we never use floci's Lambda/ECS container execution), so floci stays unprivileged.
+  floci:
+    image: floci/floci:latest-compat
+    ports:
+      - "4566:4566"
+    environment:
+      FLOCI_HOSTNAME: floci
+      # Persist buckets across restarts so logged artifacts survive `just down` + `just up`.
+      FLOCI_STORAGE_MODE: persistent
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+      # Bucket name handed to the bootstrap hook — config-driven, defaults to the repo bucket.
+      TI_S3_BUCKET: ${TI_S3_BUCKET:-terra-incognita}
+    volumes:
+      - floci-data:/app/data
+      - ./docker/floci-init/ready.d:/etc/floci/init/ready.d:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # MLflow tracking + registry server. SQLite backend (the registry; Tier-0 in prod) on a
+  # named volume; S3 artifact root pointed at floci. NO --serve-artifacts: clients read/write
+  # artifacts DIRECTLY against S3, matching the dashboard's "read from S3" assumption
+  # (contracts/mlflow-topology.md).
+  mlflow:
+    build:
+      context: ./docker
+      dockerfile: mlflow.Dockerfile
+    ports:
+      - "5000:5000"
+    depends_on:
+      floci:
+        condition: service_healthy
+    environment:
+      # Server-side S3 access (used when it validates/creates an experiment's artifact root).
+      MLFLOW_S3_ENDPOINT_URL: http://floci:4566
+      # floci needs path-style addressing — virtual-hosted `bucket.floci` would not resolve.
+      MLFLOW_BOTO_CLIENT_ADDRESSING_STYLE: path
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    volumes:
+      - mlflow-db:/mlflow
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --default-artifact-root s3://${TI_S3_BUCKET:-terra-incognita}/mlflow-artifacts
+      --no-serve-artifacts
+    healthcheck:
+      # The image is python-slim (no curl), so probe /health with stdlib urllib instead.
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  # MLflow's SQLite registry — every experiment/run/model/alias. Kept across restarts.
+  mlflow-db:
+  # floci's object store — datasets + logged artifacts. Kept across restarts.
+  floci-data:

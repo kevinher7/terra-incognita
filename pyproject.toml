@@ -21,6 +21,10 @@ ml = [
     "torchvision>=0.19",
     "ultralytics>=8.2",
     "mlflow>=3.1",
+    # MLflow doesn't depend on boto3, but with --no-serve-artifacts the client uploads
+    # artifacts DIRECTLY to S3 (floci/real) — so the training client needs it, the same
+    # reason docker/mlflow.Dockerfile adds it to the server image.
+    "boto3>=1.34",
 ]
 
 [project.scripts]
@@ -75,6 +79,12 @@ explicit = true
 
 [tool.ty.environment]
 python-version = "3.12"
+
+# scripts/ holds runnable operational glue (e.g. the local-stack smoke), which imports the
+# heavy `ml` extra (mlflow). CI typechecks the lean sync, so keep scripts/ out of the typed
+# library surface — same boundary ruff draws with `src = ["src", "tests"]` above.
+[tool.ty.src]
+exclude = ["scripts"]
 
 [tool.ruff]
 line-length = 100

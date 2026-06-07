@@ -24,6 +24,20 @@ log = logging.getLogger(__name__)
 
 _TRACER_NAME = "terra-incognita"
 
+# OTLP/HTTP signal path. Settings/.env carry the OTLP *base* endpoint (the collector root —
+# the single env delta the observability contract promises), but the HTTP exporter's
+# `endpoint` kwarg is the *signal-specific* URL used verbatim (it does NOT append a path the
+# way the OTEL_EXPORTER_OTLP_ENDPOINT env var does). So we append it ourselves.
+_OTLP_TRACES_PATH = "/v1/traces"
+
+
+def _otlp_traces_endpoint(base: str) -> str:
+    """Build the OTLP/HTTP traces URL from a base collector endpoint (idempotent)."""
+    base = base.rstrip("/")
+    if base.endswith(_OTLP_TRACES_PATH):
+        return base
+    return base + _OTLP_TRACES_PATH
+
 
 @dataclass(frozen=True)
 class EmitResult:
@@ -57,7 +71,8 @@ def configure_tracing(
         # when actually exporting — tests and pure-CLI runs don't need it.
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=otlp_endpoint)))
+        exporter = OTLPSpanExporter(endpoint=_otlp_traces_endpoint(otlp_endpoint))
+        provider.add_span_processor(BatchSpanProcessor(exporter))
 
     trace.set_tracer_provider(provider)
     return provider
