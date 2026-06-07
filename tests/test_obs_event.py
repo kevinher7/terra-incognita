@@ -12,7 +12,7 @@ from terra_incognita.cli import build_demo_training_run_event
 from terra_incognita.config import Device, Environment, Settings
 from terra_incognita.experiment import ExperimentConfig
 from terra_incognita.obs import emit_event
-from terra_incognita.obs.emit import _otlp_traces_endpoint
+from terra_incognita.obs.emit import UrandomIdGenerator, _otlp_traces_endpoint
 from terra_incognita.obs.events import TrainingRunEvent
 from terra_incognita.obs.registry import load_registry
 
@@ -95,3 +95,21 @@ def test_missing_required_domain_field_is_rejected():
 )
 def test_otlp_traces_endpoint_appends_signal_path(base: str, expected: str):
     assert _otlp_traces_endpoint(base) == expected
+
+
+def test_urandom_id_generator_unaffected_by_seeded_random():
+    # A training run seeds the global RNG (Ultralytics seed=); OTel's *default* generator
+    # would then emit the same trace_id every run, collapsing the cross-boundary join key.
+    # UrandomIdGenerator draws from os.urandom, so IDs stay unique regardless of the seed.
+    import random
+
+    generator = UrandomIdGenerator()
+    random.seed(42)
+    first_trace, first_span = generator.generate_trace_id(), generator.generate_span_id()
+    random.seed(42)
+    second_trace, second_span = generator.generate_trace_id(), generator.generate_span_id()
+
+    assert first_trace != second_trace
+    assert first_span != second_span
+    # Never the all-zero INVALID ids.
+    assert first_trace != 0 and first_span != 0

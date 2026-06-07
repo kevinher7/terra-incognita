@@ -20,6 +20,10 @@ dist/
 /artifacts/
 /mlruns/
 /mlartifacts/
+# Ultralytics train outputs + auto-downloaded pretrained weights (a training-smoke run drops
+# these in the CWD; the real weights are logged to MLflow/S3, never committed).
+/runs/
+*.pt
 
 # local stack: pinned official SigNoz, fetched on `just up` (not vendored — see justfile)
 /.signoz/

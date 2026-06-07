@@ -13,7 +13,6 @@ from typing import Annotated
 
 import typer
 
-from terra_incognita.config import Device as ConfigDevice
 from terra_incognita.config import Settings
 from terra_incognita.data import (
     CocoDataset,
@@ -25,7 +24,7 @@ from terra_incognita.data import (
 )
 from terra_incognita.experiment import ExperimentConfig, load_experiment_config
 from terra_incognita.obs import TrainingRunEvent, configure_tracing, emit_event
-from terra_incognita.obs.events import Device, ExitReason
+from terra_incognita.training import RunTracker, build_training_run_event, resolve_device
 
 # The default experiment when none is named — a committed file, never ambient env state.
 DEFAULT_CONFIG = Path("configs/baseline.yaml")
@@ -175,18 +174,24 @@ def train(
     batch: Annotated[int | None, typer.Option(help="Override config batch (ad-hoc).")] = None,
     seed: Annotated[int | None, typer.Option(help="Override config seed (ad-hoc).")] = None,
 ) -> None:
-    """Train the device-agnostic Ultralytics model and log to MLflow.
+    """Resolve + echo the experiment; the heavy train loop runs via the ml-extra script.
 
     The experiment is defined by ``--config`` (a committed ``configs/*.yaml``); the
     ``--override`` flags are an ad-hoc convenience for quick probes. Environment/parity
-    (device, tracking URI, S3) comes from :class:`Settings`. Slice 1 loads + echoes the
-    resolved experiment to prove the config path; the train loop lands in a later slice.
+    (device, tracking URI, S3) comes from :class:`Settings`. This command is the *lean*
+    config-resolution surface (no torch/ultralytics/mlflow import, so it stays in the CI
+    sync); the actual device-agnostic train → autolog → register ``@champion`` → emit
+    ``training.run`` runs in ``scripts/train_smoke.py`` (``just train-smoke``), the same
+    lean/heavy split as ``upload``/``register-dataset`` (see those commands' note).
     """
     settings = Settings()
     experiment = load_experiment_config(config, epochs=epochs, imgsz=imgsz, batch=batch, seed=seed)
     typer.echo(f"resolved experiment from {config}: {experiment.as_mlflow_params()}")
     typer.echo(f"runtime: device={settings.device.value} instance={settings.instance_type}")
-    _todo("train")
+    typer.echo(
+        "[stub] the train loop runs via the ml stack — use `just train-smoke` "
+        "(needs `just up` + `just sync-ml`)."
+    )
 
 
 @app.command()
@@ -213,24 +218,23 @@ def build_demo_training_run_event(
 ) -> TrainingRunEvent:
     """Map runtime config + experiment into a placeholder ``training.run`` event.
 
-    Pure (no I/O) so the acceptance test can build the same event it asserts on. The
-    operational values are stand-ins; a real run fills them from the run lifecycle. Note
-    the shared join key ``dataset_version`` comes from the *experiment* (what data), while
-    ``device``/``instance_type`` come from *settings* (where it ran) — the same split the
-    config refactor enforces.
+    Pure (no I/O) so the acceptance test can build the same event it asserts on. This now
+    delegates to the *real* builder (:func:`terra_incognita.training.build_training_run_event`)
+    so the observability smoke and an actual run can't drift — the only stand-ins are the
+    operational values (a fresh, untouched :class:`RunTracker`: ``completed``, zero duration).
+
+    The shared join key ``dataset_version`` comes from the *experiment* (what data), while
+    ``device``/``instance_type`` come from *settings* (where it ran).
     """
-    # The event enum has no `auto` — that's a runtime hint, not an emitted value. For
-    # the demo we resolve `auto` to `cpu` (a real run records the device actually used).
-    device = Device.cpu if settings.device is ConfigDevice.auto else Device(settings.device.value)
-    return TrainingRunEvent(
-        environment=settings.environment,
-        service_name=settings.service_name,
-        git_sha=settings.git_sha,
+    # The event enum has no `auto` — that's a runtime hint, not an emitted value. The demo
+    # has no hardware to probe, so it resolves with both capabilities false (auto -> cpu);
+    # an explicit device is honored. A real run passes the probed capabilities instead.
+    device = resolve_device(settings.device, has_cuda=False, has_mps=False)
+    return build_training_run_event(
+        settings,
+        RunTracker(),
         dataset_version=experiment.dataset_version or "demo-dataset",
         device=device,
-        instance_type=settings.instance_type,
-        exit_reason=ExitReason.completed,
-        duration_ms=0.0,
     )
 
 

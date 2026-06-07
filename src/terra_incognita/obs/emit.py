@@ -9,12 +9,14 @@ never take down the thing it observes (observability.md "Schema enforcement").
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace.id_generator import IdGenerator
 from opentelemetry.trace import Tracer
 
 from terra_incognita.obs.events import WideEvent
@@ -23,6 +25,33 @@ from terra_incognita.obs.registry import load_registry
 log = logging.getLogger(__name__)
 
 _TRACER_NAME = "terra-incognita"
+
+
+class UrandomIdGenerator(IdGenerator):
+    """Trace/span IDs from ``os.urandom`` — immune to a seeded global ``random``.
+
+    OTel's default ``RandomIdGenerator`` draws IDs from Python's ``random`` module. A training
+    run seeds that module for reproducibility (Ultralytics ``seed=``, PLAN §6) — which makes
+    the default generator **deterministic**, so every run would emit the *same* ``trace_id``
+    and collapse the cross-boundary join key the observability contract is built on
+    (observability.md "Trace-context propagation"). ``os.urandom`` is independent of that seed,
+    so IDs stay unique no matter what the process did to the RNG.
+    """
+
+    def generate_span_id(self) -> int:
+        # 8-byte span id; retry on the (astronomically unlikely) all-zero INVALID id.
+        span_id = int.from_bytes(os.urandom(8), "big")
+        while span_id == trace.INVALID_SPAN_ID:
+            span_id = int.from_bytes(os.urandom(8), "big")
+        return span_id
+
+    def generate_trace_id(self) -> int:
+        # 16-byte trace id; retry on the all-zero INVALID id.
+        trace_id = int.from_bytes(os.urandom(16), "big")
+        while trace_id == trace.INVALID_TRACE_ID:
+            trace_id = int.from_bytes(os.urandom(16), "big")
+        return trace_id
+
 
 # OTLP/HTTP signal path. Settings/.env carry the OTLP *base* endpoint (the collector root —
 # the single env delta the observability contract promises), but the HTTP exporter's
@@ -62,7 +91,9 @@ def configure_tracing(
       - neither: a provider with no processor (spans are created but go nowhere).
     """
     resource = Resource.create({"service.name": service_name})
-    provider = TracerProvider(resource=resource)
+    # UrandomIdGenerator (not OTel's default random-module one) so a seeded training RNG can't
+    # make every run share a trace_id — see the class docstring.
+    provider = TracerProvider(resource=resource, id_generator=UrandomIdGenerator())
 
     if span_processor is not None:
         provider.add_span_processor(span_processor)
