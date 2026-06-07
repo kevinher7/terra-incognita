@@ -12,6 +12,7 @@ from terra_incognita.cli import build_demo_training_run_event
 from terra_incognita.config import Device, Environment, Settings
 from terra_incognita.experiment import ExperimentConfig
 from terra_incognita.obs import emit_event
+from terra_incognita.obs.emit import _otlp_traces_endpoint
 from terra_incognita.obs.events import TrainingRunEvent
 from terra_incognita.obs.registry import load_registry
 
@@ -79,3 +80,18 @@ def test_missing_required_domain_field_is_rejected():
     }
     with pytest.raises(ValidationError):
         TrainingRunEvent.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("base", "expected"),
+    [
+        # Settings/.env carry the OTLP *base* — we append the signal path so the HTTP
+        # exporter POSTs to /v1/traces (without this it 404s against a real collector).
+        ("http://localhost:4318", "http://localhost:4318/v1/traces"),
+        ("http://localhost:4318/", "http://localhost:4318/v1/traces"),
+        # Idempotent: a full traces URL is left as-is, not doubled.
+        ("http://localhost:4318/v1/traces", "http://localhost:4318/v1/traces"),
+    ],
+)
+def test_otlp_traces_endpoint_appends_signal_path(base: str, expected: str):
+    assert _otlp_traces_endpoint(base) == expected

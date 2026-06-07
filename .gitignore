@@ -21,5 +21,8 @@ dist/
 /mlruns/
 /mlartifacts/
 
+# local stack: pinned official SigNoz, fetched on `just up` (not vendored — see justfile)
+/.signoz/
+
 # OS / editor
 .DS_Store
