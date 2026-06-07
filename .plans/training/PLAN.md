@@ -80,10 +80,20 @@ in both places. floci has nothing to do with ML; it's purely the local S3.
 - **`src/` layout**, **`ruff`** (lint + format), type hints throughout.
 - **`Typer`** for CLI entrypoints (one per pipeline step).
 - **`justfile`** as the canonical command surface (`just train`, `just serve`, `just smoke`, …).
-- **MLflow `MLproject`** wrapping the steps so runs are reproducible via `mlflow run .`
-  with pinned env + params.
-- **Config** via env + a typed config object (paths, S3, tracking URI, hyperparams);
-  **nothing hardcoded** — this is what makes local/GPU parity free.
+- **MLflow `MLproject`** wrapping the steps so runs are reproducible via `mlflow run .`.
+  The reproducible surface is **a config file, not a pile of scalar params**: the `train`
+  entry point takes `-P config=configs/<name>.yaml`, never `-P epochs=… -P seed=…`.
+- **Config — two surfaces, split by concern.** The litmus test: *"does this differ between
+  the laptop and the GPU box for the **same** experiment?"*
+  - **Yes → environment/parity** → a typed env-driven object (`Settings`): paths, S3,
+    tracking URI, OTLP endpoint, `device`, `instance_type`. From env / `.env`. **Nothing
+    hardcoded** — this is what makes local/GPU parity free.
+  - **No → it *defines* the experiment** → a typed object (`ExperimentConfig`) loaded from a
+    **versioned** `configs/*.yaml`: `epochs`, `imgsz`, `batch`, `seed`, `model_arch`,
+    `dataset_version`. A new experiment is a committed, diffable file you point at — never an
+    edit to ambient `.env` state (the env-var twin of the copy-pasted-script anti-pattern).
+    The whole resolved config is logged to MLflow params in one call (§6). Unknown/typo'd
+    keys fail loudly.
 - **OpenTelemetry** for operational wide events (§6b) — OTLP to local SigNoz vs the deployed
   SigNoz on Hetzner, selected by `OTEL_EXPORTER_OTLP_ENDPOINT` (same env-parity pattern as
   the tracking URI). Contract: [../contracts/observability.md](../contracts/observability.md).
@@ -124,7 +134,8 @@ generalization). None block us; the model is meant to be imperfect.
   params/metrics/mAP/per-class AP; write **custom code** only for what autolog can't do —
   pyfunc packaging, model signature, registry + `@champion` alias, dataset logging, and
   provenance tags (`device`, instance type, git SHA, dataset version).
-- **Reproducibility:** fixed seeds; full config logged as params. Note MPS↔CUDA results
+- **Reproducibility:** fixed seeds; the full resolved `ExperimentConfig` logged as params
+  in one call (the versioned `configs/*.yaml` per §4 is the source). Note MPS↔CUDA results
   are not bit-identical — acceptable (accuracy is a non-goal).
 - **Data input:** training **materializes the dataset from its `s3_uri`** into the local
   YOLO layout (not a hardcoded path), so local and GPU runs are identical.
