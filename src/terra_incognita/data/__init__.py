@@ -20,18 +20,44 @@ from terra_incognita.data.coco_to_yolo import (
     normalize_bbox,
     split_by_fraction,
 )
+from terra_incognita.data.registration import (
+    COCO_ARTIFACT_FILENAME,
+    DATASETS_EXPERIMENT,
+    DatasetVersion,
+    build_dataset_tags,
+    coco_annotation_key,
+    dataset_s3_prefix,
+    dataset_s3_uri,
+)
+from terra_incognita.data.subset import (
+    SamplingConfig,
+    SubsetResult,
+    sample_subset,
+    write_subset_coco,
+)
 
 __all__ = [
+    "COCO_ARTIFACT_FILENAME",
+    "DATASETS_EXPERIMENT",
     "CategoryIndex",
     "CocoAnnotation",
     "CocoCategory",
     "CocoDataset",
     "CocoImage",
     "ConversionResult",
+    "DatasetVersion",
+    "SamplingConfig",
     "Split",
+    "SubsetResult",
     "YoloLabel",
+    "build_dataset_tags",
+    "coco_annotation_key",
     "convert_coco_to_yolo",
+    "dataset_s3_prefix",
+    "dataset_s3_uri",
     "load_category_index",
     "normalize_bbox",
+    "sample_subset",
     "split_by_fraction",
+    "write_subset_coco",
 ]

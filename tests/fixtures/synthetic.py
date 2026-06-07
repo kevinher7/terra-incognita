@@ -37,6 +37,11 @@ ANCHOR_HEIGHT = 600
 ANCHOR_BBOX: tuple[float, float, float, float] = (100.0, 50.0, 200.0, 100.0)
 ANCHOR_CATEGORY_ID = 3  # raccoon → YOLO index 0
 
+# How many distinct camera locations to spread the images across. The subset sampler
+# splits train/val by location (PLAN §5.3), so a fixture needs ≥2 locations for a
+# non-empty, location-disjoint split; 5 gives the split something to actually partition.
+NUM_LOCATIONS = 5
+
 
 @dataclass(frozen=True)
 class Anchor:
@@ -62,6 +67,10 @@ class SyntheticDataset:
     num_images: int
     num_annotations: int
     anchor: Anchor
+    # Camera location metadata, for the subset sampler tests: image id → location, and the
+    # sorted set of distinct locations the fixture spans.
+    image_locations: dict[str, str]
+    locations: tuple[str, ...]
 
 
 def generate_synthetic_dataset(
@@ -82,6 +91,7 @@ def generate_synthetic_dataset(
     images: list[dict] = []
     annotations: list[dict] = []
     image_splits: dict[str, Split] = {}
+    image_locations: dict[str, str] = {}
     ann_id = 0
 
     for i in range(num_images):
@@ -124,7 +134,18 @@ def generate_synthetic_dataset(
 
         file_name = f"{image_id}.png"
         canvas.save(images_dir / file_name)
-        images.append({"id": image_id, "file_name": file_name, "width": width, "height": height})
+        # Round-robin location so the fixture spans NUM_LOCATIONS cameras deterministically.
+        location = f"loc-{i % NUM_LOCATIONS}"
+        image_locations[image_id] = location
+        images.append(
+            {
+                "id": image_id,
+                "file_name": file_name,
+                "width": width,
+                "height": height,
+                "location": location,
+            }
+        )
         # Deterministic, both-splits-non-empty: every 3rd image to val.
         image_splits[image_id] = "val" if i % 3 == 0 else "train"
 
@@ -155,6 +176,8 @@ def generate_synthetic_dataset(
         num_images=len(images),
         num_annotations=len(annotations),
         anchor=anchor,
+        image_locations=image_locations,
+        locations=tuple(sorted(set(image_locations.values()))),
     )
 
 

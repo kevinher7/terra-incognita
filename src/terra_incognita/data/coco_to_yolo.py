@@ -84,6 +84,11 @@ class CocoImage(_CocoModel):
     file_name: str
     width: int = Field(gt=0)
     height: int = Field(gt=0)
+    # Camera/site id (CCT has ~140). Optional: the converter never reads it, but the
+    # subset sampler splits train/val by it (PLAN §5.3). `None` means "no location in the
+    # COCO" — fine for the converter, but the sampler fails loud on a selected image
+    # missing it (you cannot do a location-disjoint split without a location).
+    location: str | None = None
 
 
 class CocoAnnotation(_CocoModel):
