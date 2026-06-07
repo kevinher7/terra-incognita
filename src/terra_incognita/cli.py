@@ -7,6 +7,7 @@ proving the observability path end to end. Later slices fill in each stub.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated
 
@@ -14,7 +15,14 @@ import typer
 
 from terra_incognita.config import Device as ConfigDevice
 from terra_incognita.config import Settings
-from terra_incognita.data import CocoDataset, convert_coco_to_yolo, split_by_fraction
+from terra_incognita.data import (
+    CocoDataset,
+    SamplingConfig,
+    convert_coco_to_yolo,
+    sample_subset,
+    split_by_fraction,
+    write_subset_coco,
+)
 from terra_incognita.experiment import ExperimentConfig, load_experiment_config
 from terra_incognita.obs import TrainingRunEvent, configure_tracing, emit_event
 from terra_incognita.obs.events import Device, ExitReason
@@ -44,12 +52,51 @@ def download() -> None:
 
 @app.command()
 def subset(
+    coco: Annotated[Path, typer.Option(help="Source COCO annotations JSON to sample from.")],
+    out: Annotated[Path, typer.Option(help="Output dir for the subset COCO + split.json.")],
     seed: Annotated[int, typer.Option(help="Seed for the one-time stratified sampling.")] = 42,
+    min_per_class: Annotated[
+        int, typer.Option(help="Floor of images kept per class (all available if fewer).")
+    ] = 20,
+    target_empty_ratio: Annotated[
+        float, typer.Option(help="Target fraction of empty (no-box) images in the subset.")
+    ] = 0.25,
+    val_location_fraction: Annotated[
+        float,
+        typer.Option(help="Fraction of camera locations held out for val (split is disjoint)."),
+    ] = 0.2,
 ) -> None:
-    """Build the seeded, location-split stratified subset (~5-10K images)."""
-    # `seed` is a data-pipeline input (it fixes the one-time subset), distinct from the
-    # training seed in ExperimentConfig — hence a plain CLI option, not the experiment file.
-    typer.echo(f"[stub] 'subset' (seed={seed}) is not implemented yet (scaffold slice 1).")
+    """Build the seeded, location-split stratified subset (PLAN §5.3).
+
+    Writes ``annotations.json`` (the faithful subset COCO — the registered source of truth)
+    and ``split.json`` (the location-disjoint train/val map) into ``--out``. The split is a
+    *training* input for ``convert --split``, not a registration tag. ``seed`` is a
+    data-pipeline input (it fixes the one-time subset), distinct from the training seed in
+    ExperimentConfig — hence a plain CLI option, not the experiment file.
+    """
+    dataset = CocoDataset.from_path(coco)
+    config = SamplingConfig(
+        seed=seed,
+        min_per_class=min_per_class,
+        target_empty_ratio=target_empty_ratio,
+        val_location_fraction=val_location_fraction,
+    )
+    result = sample_subset(dataset, config)
+
+    out.mkdir(parents=True, exist_ok=True)
+    subset_coco = write_subset_coco(coco, list(result.image_ids), out / "annotations.json")
+    split_path = out / "split.json"
+    split_path.write_text(json.dumps(result.image_splits, indent=2) + "\n", encoding="utf-8")
+
+    typer.echo(
+        f"sampled {result.num_images} images "
+        f"({result.num_annotations} annotations, {result.num_empty_images} empty) "
+        f"from {len(dataset.images)} -> {out}"
+    )
+    typer.echo(f"  per-class images: {result.per_class_counts}")
+    typer.echo(f"  locations: train={result.train_locations} val={result.val_locations} (disjoint)")
+    typer.echo(f"  subset COCO: {subset_coco}")
+    typer.echo(f"  split: {split_path}")
 
 
 @app.command()
@@ -57,19 +104,30 @@ def convert(
     coco: Annotated[Path, typer.Option(help="COCO annotations JSON to convert.")],
     images: Annotated[Path, typer.Option(help="Directory holding the source images.")],
     out: Annotated[Path, typer.Option(help="Output dir for the Ultralytics layout.")],
+    split: Annotated[
+        Path | None,
+        typer.Option(
+            help="split.json from `subset` (location-disjoint). Omit for the placeholder."
+        ),
+    ] = None,
     val_fraction: Annotated[
-        float, typer.Option(help="Placeholder split: fraction of images to val.")
+        float,
+        typer.Option(help="Placeholder split: fraction of images to val (ignored if --split)."),
     ] = 0.2,
     seed: Annotated[int, typer.Option(help="Seed for the placeholder split.")] = 42,
 ) -> None:
     """Convert COCO annotations to the Ultralytics YOLO layout.
 
-    The split here is the *placeholder* fraction split (``split_by_fraction``); the real
-    location-disjoint split is the subset step's job (PLAN §5.3). The converter itself is
-    policy-free — it just honors the split it's handed.
+    Prefer ``--split split.json`` (the real location-disjoint split from the ``subset`` step,
+    PLAN §5.3); without it we fall back to the *placeholder* fraction split
+    (``split_by_fraction``). The converter itself is policy-free — it just honors the split
+    it's handed.
     """
     dataset = CocoDataset.from_path(coco)
-    image_splits = split_by_fraction([img.id for img in dataset.images], val_fraction, seed)
+    if split is not None:
+        image_splits = json.loads(Path(split).read_text(encoding="utf-8"))
+    else:
+        image_splits = split_by_fraction([img.id for img in dataset.images], val_fraction, seed)
     result = convert_coco_to_yolo(dataset, images, out, image_splits)
     typer.echo(
         f"converted {result.num_annotations} annotations across {result.num_images} images "
@@ -83,16 +141,26 @@ def convert(
     typer.echo(f"  index->category_id map: {result.category_map_path}")
 
 
+# `upload` and `register-dataset` need the heavy `ml` deps (boto3 + mlflow), which the lean
+# CI sync (and `ty`) doesn't have — so, like `train`/`package`/`serve`, the real path lives
+# in a runnable script (`scripts/dataset_smoke.py`, `just dataset-smoke`) that exercises the
+# whole sample→upload→register→verify chain against the running stack. The pure logic it
+# uses (sampler, tag-building, S3-path derivation) is in `src/` and unit-tested in CI.
 @app.command()
 def upload() -> None:
     """Upload the subset (images + COCO file) to S3 (floci/real)."""
-    _todo("upload")
+    typer.echo(
+        "[stub] 'upload' runs via the ml stack — use `just dataset-smoke` (needs `just up`)."
+    )
 
 
 @app.command("register-dataset")
 def register_dataset() -> None:
     """Register the dataset version in MLflow (datasets-experiment convention)."""
-    _todo("register-dataset")
+    typer.echo(
+        "[stub] 'register-dataset' runs via the ml stack — use `just dataset-smoke` "
+        "(needs `just up`)."
+    )
 
 
 # --- training / serving (PLAN §6/§7) ----------------------------------------

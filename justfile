@@ -36,8 +36,9 @@ check: lint fmt-check typecheck test
 download:
     uv run terra-incognita download
 
-subset:
-    uv run terra-incognita subset
+# Build a seeded, location-split stratified subset (writes subset COCO + split.json to `out`).
+subset coco out:
+    uv run terra-incognita subset --coco {{coco}} --out {{out}}
 
 # Convert a COCO file + images into the Ultralytics YOLO layout (placeholder fraction split).
 convert coco images out:
@@ -100,3 +101,8 @@ down:
 # round-trip an artifact through floci S3. dotenv-load gives it the MLFLOW_*/AWS_* env.
 stack-smoke:
     uv run --extra ml python scripts/stack_smoke.py
+
+# Dataset-pipeline acceptance smoke (needs `just up` + `just sync-ml`): sample a subset,
+# upload it to floci S3, register it in the `datasets` experiment, and verify the round-trip.
+dataset-smoke:
+    uv run --extra ml python scripts/dataset_smoke.py
