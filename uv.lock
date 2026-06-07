@@ -1696,6 +1696,7 @@ ml = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pillow" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
@@ -1723,6 +1724,7 @@ provides-extras = ["ml"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "pillow", specifier = ">=10.3" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.5" },
     { name = "ty", specifier = ">=0.0.1" },

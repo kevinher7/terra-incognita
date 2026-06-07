@@ -39,8 +39,9 @@ download:
 subset:
     uv run terra-incognita subset
 
-convert:
-    uv run terra-incognita convert
+# Convert a COCO file + images into the Ultralytics YOLO layout (placeholder fraction split).
+convert coco images out:
+    uv run terra-incognita convert --coco {{coco}} --images {{images}} --out {{out}}
 
 upload:
     uv run terra-incognita upload
