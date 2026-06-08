@@ -82,9 +82,11 @@ python-version = "3.12"
 
 # scripts/ holds runnable operational glue (e.g. the local-stack smoke), which imports the
 # heavy `ml` extra (mlflow). CI typechecks the lean sync, so keep scripts/ out of the typed
-# library surface — same boundary ruff draws with `src = ["src", "tests"]` above.
+# library surface — same boundary ruff draws with `src = ["src", "tests"]` above. tests/smoke
+# is the connected end-to-end smoke: it imports the `ml` extra and the `scripts/` train/serve
+# logic, so it belongs on the same heavy-side boundary (run via the dedicated CI `smoke` job).
 [tool.ty.src]
-exclude = ["scripts"]
+exclude = ["scripts", "tests/smoke"]
 
 [tool.ruff]
 line-length = 100
