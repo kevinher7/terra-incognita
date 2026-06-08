@@ -1,6 +1,3 @@
-# Auto-track GitHub Actions drift so a deprecated runtime (e.g. the Node 20 -> 24
-# forced cutoff that motivated this file) never sneaks up on us again. Dependabot
-# opens a PR; CI's own check + smoke jobs are the safety net that gate each bump.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
