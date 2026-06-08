@@ -59,19 +59,28 @@ jobs:
       - name: Install Python 3.12
         run: uv python install 3.12
 
-      # Lean locked env first (asserts uv.lock is in sync), then add the ml extra. This also
-      # creates the .venv the `uv pip install` / `uv run --no-sync` steps below target.
-      - name: Sync dependencies (lean, locked)
+      # Lean locked env first (asserts uv.lock is in sync). uv installs terra_incognita
+      # *editable* (src/ layout) — which the smoke relies on: the wide-event registry loader
+      # resolves the read-only `.plans/` mirror relative to the package's repo-root parent, and
+      # `.plans/` is never packaged into a wheel. This also creates the .venv the steps below target.
+      - name: Sync dependencies (lean, locked, editable)
         run: uv sync --frozen
 
-      # Add the `ml` extra with CPU torch. pyproject pins Linux torch → cu124 for the future GPU
-      # box; this CI runner has no GPU, so `--torch-backend=cpu` fetches the smaller/faster CPU
-      # wheels (which run on CPU) instead. The committed cu124 sources are untouched.
-      - name: Install ml extra (CPU torch)
-        run: uv pip install --torch-backend=cpu ".[ml]"
+      # Install the ml stack with CPU torch — BY NAME, deliberately not via `.[ml]`:
+      #   * pyproject pins Linux torch → cu124 for the future GPU box; `--torch-backend=cpu` does
+      #     NOT override an explicit [tool.uv.sources] index, so going through `.[ml]` would pull
+      #     the big cu124 wheels. Installing torch/torchvision straight from the CPU index gets the
+      #     smaller/faster CPU wheels (which run on CPU) without touching the committed sources.
+      #   * `uv pip install ".[ml]"` would reinstall terra_incognita as a NON-editable wheel,
+      #     breaking the `.plans/` lookup above. Installing only the deps by name leaves the
+      #     editable project intact. (This list mirrors pyproject's `[project.optional-dependencies] ml`.)
+      - name: Install ml stack (CPU torch)
+        run: |
+          uv pip install "torch>=2.4" "torchvision>=0.19" --index-url https://download.pytorch.org/whl/cpu
+          uv pip install "ultralytics>=8.2" "mlflow>=3.1" "boto3>=1.34"
 
-      # --no-sync so `uv run` doesn't re-resolve to the lockfile and uninstall the pip-installed
-      # CPU ml deps. We invoke pytest directly (not `just smoke`, whose `--extra ml` would re-pull
+      # --no-sync so `uv run` doesn't re-resolve to the lockfile and uninstall the ml deps we just
+      # installed. We invoke pytest directly (not `just smoke`, whose `--extra ml` would re-pull
       # cu124 on Linux). A deliberate break in the COCO→YOLO math or the serving contract fails here.
       - name: Smoke pipeline (end to end)
         run: uv run --no-sync pytest tests/smoke
