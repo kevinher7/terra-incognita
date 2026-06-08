@@ -218,8 +218,12 @@ def serve() -> None:
 
 @app.command()
 def smoke() -> None:
-    """Run the fixture smoke pipeline end to end (PLAN §10)."""
-    _todo("smoke")
+    """Run the connected fixture smoke pipeline end to end (PLAN §10, slice 7)."""
+    typer.echo(
+        "[stub] 'smoke' is the connected end-to-end pytest pipeline (it needs the ml stack) — "
+        "use `just smoke` (needs `just sync-ml`). It chains COCO→YOLO → 1-epoch train → pyfunc "
+        "package → serving round-trip → training.run wide-event schema, server-free."
+    )
 
 
 # --- observability vertical (the slice-1 testable path) ----------------------

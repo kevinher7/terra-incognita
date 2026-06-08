@@ -40,3 +40,38 @@ jobs:
 
       - name: Test (pytest)
         run: uv run pytest
+
+  # The connected end-to-end smoke (issue #7): the regression backbone that chains every stage
+  # on synthetic fixtures and gates every PR. Separate from `check` because it needs the heavy
+  # `ml` extra (torch/ultralytics/mlflow), which the lean gate deliberately omits. It runs
+  # server-free — tmp SQLite backend + tmp local artifact dir, in-process load_model, in-memory
+  # OTel exporter — so no docker stack (floci/MLflow server) is needed.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      # Lean locked env first (asserts uv.lock is in sync), then add the ml extra. This also
+      # creates the .venv the `uv pip install` / `uv run --no-sync` steps below target.
+      - name: Sync dependencies (lean, locked)
+        run: uv sync --frozen
+
+      # Add the `ml` extra with CPU torch. pyproject pins Linux torch → cu124 for the future GPU
+      # box; this CI runner has no GPU, so `--torch-backend=cpu` fetches the smaller/faster CPU
+      # wheels (which run on CPU) instead. The committed cu124 sources are untouched.
+      - name: Install ml extra (CPU torch)
+        run: uv pip install --torch-backend=cpu ".[ml]"
+
+      # --no-sync so `uv run` doesn't re-resolve to the lockfile and uninstall the pip-installed
+      # CPU ml deps. We invoke pytest directly (not `just smoke`, whose `--extra ml` would re-pull
+      # cu124 on Linux). A deliberate break in the COCO→YOLO math or the serving contract fails here.
+      - name: Smoke pipeline (end to end)
+        run: uv run --no-sync pytest tests/smoke

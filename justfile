@@ -63,8 +63,14 @@ package image="cct-detector-serving":
 serve port="5001":
     uv run --extra ml mlflow models serve -m "models:/cct-detector@champion" -p {{port}} --env-manager local
 
+# Connected end-to-end smoke (slice 7): the regression backbone that chains every stage on
+# synthetic fixtures — COCO→YOLO (assert math) → 1-epoch train + MLflow logging → pyfunc package
+# → serving round-trip → training.run wide-event schema. Server-free (tmp SQLite + tmp local
+# artifact dir, in-process load_model, in-memory OTel exporter): no `just up` stack needed, only
+# the `ml` extra (on macOS `--extra ml` resolves the CPU/MPS wheels — fast). The CI `smoke` job
+# runs the same test with CPU torch on Linux (see .github/workflows/ci.yml).
 smoke:
-    uv run terra-incognita smoke
+    uv run --extra ml pytest tests/smoke
 
 # Emit a registry-validated training.run wide event (observability smoke).
 demo-event:
