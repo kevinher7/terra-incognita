@@ -31,7 +31,6 @@ the ``just`` recipe's dotenv) — nothing localhost is hardcoded here.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import tempfile
@@ -39,9 +38,7 @@ from pathlib import Path
 
 import boto3
 import mlflow
-import pandas as pd
 from botocore.client import BaseClient, Config
-from mlflow.models import infer_signature
 
 # `python scripts/x.py` puts only scripts/ on sys.path; add the repo root so the synthetic
 # fixture generator (under tests/) is importable. terra_incognita itself is installed
@@ -49,8 +46,19 @@ from mlflow.models import infer_signature
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
 
+# The real serving pyfunc (slice 6) — a sibling script, importable because scripts/ is on
+# sys.path when this runs as `python scripts/train_smoke.py`. It carries the heavy ml deps
+# (mlflow + ultralytics), exactly like this file.
+import serving_pyfunc  # noqa: E402
+from serving_pyfunc import (  # noqa: E402
+    CATEGORY_MAP_ARTIFACT,
+    WEIGHTS_ARTIFACT,
+    CCTDetector,
+    build_serving_signature,
+)
 from tests.fixtures.synthetic import generate_synthetic_dataset  # noqa: E402
 
+import terra_incognita  # noqa: E402
 from terra_incognita.config import Settings  # noqa: E402
 from terra_incognita.data import (  # noqa: E402
     CategoryIndex,
@@ -161,13 +169,15 @@ def _upload_and_register_dataset(
 
 def _materialize_from_s3(
     s3: BaseClient, bucket: str, coco_key: str, image_prefix: str, out_dir: Path
-) -> tuple[Path, int]:
-    """Download the COCO + images from S3 and build the YOLO layout; return (data.yaml, bytes).
+) -> tuple[Path, Path, int]:
+    """Download the COCO + images from S3 and build the YOLO layout.
 
-    This is the "materialize the dataset from its ``s3_uri`` into the local YOLO layout"
-    deliverable — driven entirely by the dataset's S3 keys, never a hardcoded local path, so
-    a laptop run and a GPU-box run are identical. ``bytes`` (sum of objects pulled) becomes the
-    wide event's ``camtrap.s3.bytes`` operational field.
+    Returns ``(data.yaml, category_map, bytes)``. This is the "materialize the dataset from its
+    ``s3_uri`` into the local YOLO layout" deliverable — driven entirely by the dataset's S3
+    keys, never a hardcoded local path, so a laptop run and a GPU-box run are identical. The
+    ``category_map`` (the converter's index→``category_id`` artifact) is baked into the served
+    model so serving can translate YOLO indices back to COCO ids (serving-io.md). ``bytes`` (sum
+    of objects pulled) becomes the wide event's ``camtrap.s3.bytes`` operational field.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     local_coco = out_dir / "annotations.json"
@@ -189,49 +199,26 @@ def _materialize_from_s3(
         [img.id for img in dataset.images], val_fraction=0.3, seed=_SEED
     )
     result = convert_coco_to_yolo(dataset, local_images, out_dir / "yolo", image_splits)
-    return result.data_yaml_path, bytes_pulled
-
-
-class _UltralyticsDetector(mlflow.pyfunc.PythonModel):
-    """MINIMAL slice-5 pyfunc so we have a *registrable* model with a signature.
-
-    It loads the trained weights and returns raw detections (one JSON string per input image
-    path). This is intentionally a placeholder: slice 6 replaces it with the real serving
-    contract (base64 image in → xyxy + COCO ``category_id`` out — serving-io.md) and
-    ``build-docker`` packaging. Slice 5 only needs a registered version + signature + alias.
-    """
-
-    def load_context(self, context: mlflow.pyfunc.PythonModelContext) -> None:
-        from ultralytics import YOLO
-
-        self._model = YOLO(context.artifacts["weights"])
-
-    def predict(
-        self, context: mlflow.pyfunc.PythonModelContext, model_input: pd.DataFrame
-    ) -> pd.DataFrame:
-        detections: list[str] = []
-        for image_path in model_input["image_path"].tolist():
-            result = self._model(image_path, verbose=False)[0]
-            boxes = [
-                {
-                    "xyxy": box.xyxy[0].tolist(),
-                    "conf": float(box.conf[0]),
-                    "cls": int(box.cls[0]),
-                }
-                for box in result.boxes
-            ]
-            detections.append(json.dumps(boxes))
-        return pd.DataFrame({"detections": detections})
+    return result.data_yaml_path, result.category_map_path, bytes_pulled
 
 
 def _train_and_register(
-    data_yaml: Path, device: Device, dataset_version: str, settings: Settings
+    data_yaml: Path,
+    category_map: Path,
+    device: Device,
+    dataset_version: str,
+    settings: Settings,
 ) -> tuple[str, dict[str, float]]:
-    """1-epoch autolog train, then custom provenance + signature + registry + ``@champion``.
+    """1-epoch autolog train, then custom provenance + the real serving pyfunc + ``@champion``.
 
     Returns (registered version, metrics). Ultralytics' MLflow callback owns the run for
     params/metrics (the *built-in* half of the hybrid); we reopen it by id to add the *custom*
     half autolog can't do — provenance tags, the model+signature, registration, and the alias.
+    The logged model is the real :class:`~serving_pyfunc.CCTDetector` (slice 6): the trained
+    weights **and** the index→``category_id`` map (``category_map``, from this run's dataset) are
+    baked in as artifacts, with this file + the ``terra_incognita`` package carried via
+    ``code_paths`` so ``mlflow models serve`` / ``build-docker`` reconstruct it with no editable
+    install and no S3 at runtime (serving-io.md).
     """
     from ultralytics import YOLO
     from ultralytics import settings as ultralytics_settings
@@ -273,22 +260,28 @@ def _train_and_register(
         # `architecture` as a param too (model-registry.md: tag/param) for MLflow-UI compare.
         mlflow.log_param("architecture", architecture)
 
-        # A signature so the registered model is self-describing (slice-5 placeholder schema:
-        # image path in → detections-JSON out; slice 6 swaps in the base64 serving contract).
-        # No input_example: MLflow validates it by *running* predict at log time, which would
-        # load a real image — moot for this placeholder, and slice 6 owns the served wire format.
-        signature = infer_signature(
-            pd.DataFrame({"image_path": ["images/example.jpg"]}),
-            pd.DataFrame({"detections": ["[]"]}),
-        )
+        # The real serving signature (slice 6): base64 image in + the inference params
+        # (conf/iou/max_det), per serving-io.md. No input_example — MLflow validates it by
+        # *running* predict at log time, which needs the loaded weights + a real image; the
+        # serving round-trip (serve_smoke.py) is where that wire contract is exercised.
+        signature = build_serving_signature()
+
+        # code_paths bakes THIS pyfunc source + the terra_incognita package (which carries the
+        # pure terra_incognita.serving logic) into the model artifact, so the served container
+        # reconstructs CCTDetector with no editable install — true to the baked-in image.
+        code_paths = [serving_pyfunc.__file__, str(Path(terra_incognita.__file__).parent)]
 
         model_info = mlflow.pyfunc.log_model(
             name="model",
-            python_model=_UltralyticsDetector(),
-            artifacts={"weights": str(best_weights)},
+            python_model=CCTDetector(),
+            artifacts={
+                WEIGHTS_ARTIFACT: str(best_weights),
+                CATEGORY_MAP_ARTIFACT: str(category_map),
+            },
             signature=signature,
+            code_paths=code_paths,
             registered_model_name=REGISTERED_MODEL_NAME,
-            pip_requirements=["ultralytics", "torch", "torchvision", "pandas", "mlflow"],
+            pip_requirements=["ultralytics", "torch", "torchvision", "pillow", "mlflow"],
         )
 
     version = str(model_info.registered_model_version)
@@ -318,13 +311,15 @@ def run_smoke() -> bool:
         )
 
         # 2. materialize the dataset FROM s3_uri into the YOLO layout (no hardcoded path).
-        data_yaml, bytes_pulled = _materialize_from_s3(
+        data_yaml, category_map, bytes_pulled = _materialize_from_s3(
             s3, settings.s3_bucket, coco_key, image_prefix, tmp_path / "materialized"
         )
         tracker.s3_bytes = bytes_pulled
 
         # 3+4. device-agnostic 1-epoch train (autolog) + custom provenance/signature/registry.
-        version, metrics = _train_and_register(data_yaml, device, _DATASET_VERSION, settings)
+        version, metrics = _train_and_register(
+            data_yaml, category_map, device, _DATASET_VERSION, settings
+        )
         tracker.model_version = version
 
     # 5. operational wide event — emitted after the lifecycle block so duration is final.
