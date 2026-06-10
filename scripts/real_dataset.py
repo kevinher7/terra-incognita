@@ -146,6 +146,35 @@ def _download_images(file_names: list[str], images_dir: Path) -> int:
     return sum((images_dir / name).stat().st_size for name in file_names)
 
 
+def _preflight(s3: BaseClient, settings: Settings) -> None:
+    """Fail fast (before the multi-GB download) if S3 / MLflow aren't reachable + credentialed.
+
+    The heavy download runs first, so without this a missing ``.env`` cred or a stack that isn't
+    ``just up`` only surfaces *after* minutes of transfer (and at the very end for MLflow). A
+    cheap ``head_bucket`` + a tracking ping turn those late failures into one immediate, actionable
+    message. We catch broadly on purpose — any setup problem (no creds, floci down, bucket missing,
+    tracking server down) should produce the same "fix your stack/.env" guidance, not a stack trace.
+    """
+    try:
+        s3.head_bucket(Bucket=settings.s3_bucket)
+    except Exception as error:
+        raise SystemExit(
+            f"S3 pre-flight failed: cannot reach bucket {settings.s3_bucket!r} at "
+            f"{settings.s3_endpoint_url} ({type(error).__name__}: {error}).\n"
+            "Fix: run `just up` (floci :4566) and ensure `.env` carries the floci AWS_* creds + "
+            "MLFLOW_S3_ENDPOINT_URL — copy them from .env.example."
+        ) from error
+    try:
+        mlflow.MlflowClient().search_experiments(max_results=1)
+    except Exception as error:
+        raise SystemExit(
+            f"MLflow pre-flight failed: cannot reach the tracking server at "
+            f"{settings.mlflow_tracking_uri} ({type(error).__name__}: {error}).\n"
+            "Fix: run `just up` (mlflow :5000) and ensure `.env` sets MLFLOW_TRACKING_URI "
+            "— see .env.example."
+        ) from error
+
+
 def run() -> bool:
     """Build → upload → register the real subset; return whether it registered + verified."""
     settings = Settings()
@@ -154,6 +183,9 @@ def run() -> bool:
 
     cache_dir = settings.data_dir / "lila"
     images_dir = cache_dir / "cct_images"
+
+    # Fail fast on a missing `.env` / down stack BEFORE the heavy download (not after it).
+    _preflight(s3, settings)
 
     # 1-2. download + clean the real annotation file (empties -> zero-annotation images).
     raw_path = _fetch_annotations(cache_dir)
