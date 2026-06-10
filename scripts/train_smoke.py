@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import boto3
@@ -64,6 +65,7 @@ from terra_incognita.data import (  # noqa: E402
     CategoryIndex,
     CocoDataset,
     DatasetVersion,
+    Split,
     build_dataset_tags,
     coco_annotation_key,
     convert_coco_to_yolo,
@@ -168,7 +170,13 @@ def _upload_and_register_dataset(
 
 
 def _materialize_from_s3(
-    s3: BaseClient, bucket: str, coco_key: str, image_prefix: str, out_dir: Path
+    s3: BaseClient,
+    bucket: str,
+    coco_key: str,
+    image_prefix: str,
+    out_dir: Path,
+    *,
+    split: Callable[[CocoDataset], dict[str, Split]] | None = None,
 ) -> tuple[Path, Path, int]:
     """Download the COCO + images from S3 and build the YOLO layout.
 
@@ -178,6 +186,11 @@ def _materialize_from_s3(
     ``category_map`` (the converter's index→``category_id`` artifact) is baked into the served
     model so serving can translate YOLO indices back to COCO ids (serving-io.md). ``bytes`` (sum
     of objects pulled) becomes the wide event's ``camtrap.s3.bytes`` operational field.
+
+    ``split`` derives the train/val map from the materialized COCO (the split is a *training*
+    input, not stored in S3 — dataset-conventions.md). The fixture smokes leave it ``None`` →
+    the placeholder fraction split; the real run (``real_train.py``) passes the location-disjoint
+    :func:`~terra_incognita.data.split_selected_by_location` so train/val cameras are disjoint.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     local_coco = out_dir / "annotations.json"
@@ -192,12 +205,12 @@ def _materialize_from_s3(
         s3.download_file(bucket, f"{image_prefix}{image.file_name}", str(dest))
         bytes_pulled += dest.stat().st_size
 
-    # The split is a *training* input, not part of the registered dataset (dataset-conventions
-    # keeps no split in S3). For the smoke we derive the placeholder fraction split; the real
-    # location-disjoint policy is the subset step's job and is unit-tested there (PLAN §5.3).
-    image_splits = split_by_fraction(
-        [img.id for img in dataset.images], val_fraction=0.3, seed=_SEED
-    )
+    if split is not None:
+        image_splits = split(dataset)
+    else:
+        image_splits = split_by_fraction(
+            [img.id for img in dataset.images], val_fraction=0.3, seed=_SEED
+        )
     result = convert_coco_to_yolo(dataset, local_images, out_dir / "yolo", image_splits)
     return result.data_yaml_path, result.category_map_path, bytes_pulled
 
@@ -208,8 +221,14 @@ def _train_and_register(
     device: Device,
     dataset_version: str,
     settings: Settings,
+    *,
+    model_arch: str = _MODEL_ARCH,
+    epochs: int = _EPOCHS,
+    imgsz: int = _IMGSZ,
+    batch: int = _BATCH,
+    seed: int = _SEED,
 ) -> tuple[str, dict[str, float]]:
-    """1-epoch autolog train, then custom provenance + the real serving pyfunc + ``@champion``.
+    """Autolog train, then custom provenance + the real serving pyfunc + ``@champion``.
 
     Returns (registered version, metrics). Ultralytics' MLflow callback owns the run for
     params/metrics (the *built-in* half of the hybrid); we reopen it by id to add the *custom*
@@ -219,6 +238,10 @@ def _train_and_register(
     baked in as artifacts, with this file + the ``terra_incognita`` package carried via
     ``code_paths`` so ``mlflow models serve`` / ``build-docker`` reconstruct it with no editable
     install and no S3 at runtime (serving-io.md).
+
+    The ``model_arch``/``epochs``/``imgsz``/``batch``/``seed`` keyword args default to the tiny
+    smoke values; the real run (``real_train.py``) passes the committed ``configs/cct_real.yaml``
+    experiment so the *same* registration path produces a genuine champion (PLAN §6).
     """
     from ultralytics import YOLO
     from ultralytics import settings as ultralytics_settings
@@ -228,15 +251,15 @@ def _train_and_register(
     ultralytics_settings.update({"mlflow": True})
     os.environ["MLFLOW_EXPERIMENT_NAME"] = _TRAINING_EXPERIMENT
 
-    architecture = architecture_from_arch(_MODEL_ARCH)
-    model = YOLO(_MODEL_ARCH)
+    architecture = architecture_from_arch(model_arch)
+    model = YOLO(model_arch)
     model.train(
         data=str(data_yaml),
-        epochs=_EPOCHS,
-        imgsz=_IMGSZ,
-        batch=_BATCH,
+        epochs=epochs,
+        imgsz=imgsz,
+        batch=batch,
         device=ultralytics_device(device),
-        seed=_SEED,
+        seed=seed,
         plots=False,
         verbose=False,
     )

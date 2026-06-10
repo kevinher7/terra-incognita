@@ -46,7 +46,14 @@ def _todo(step: str) -> None:
 @app.command()
 def download() -> None:
     """Download Caltech Camera Traps annotations + images from LILA."""
-    _todo("download")
+    # The real LILA download + S3 upload + dataset registration is a heavy, one-time run that
+    # needs the `ml` stack (boto3 + mlflow) and the running stack — so, like `upload`/
+    # `register-dataset`, it lives in a runnable script (`scripts/real_dataset.py`), not this
+    # lean CLI. The pure logic it uses (URL building, COCO clean-up, sampling) is in `src/`.
+    typer.echo(
+        "[stub] the real LILA download + subset + register runs via the ml stack — "
+        "use `just real-dataset` (needs `just up` + `just sync-ml`)."
+    )
 
 
 @app.command()

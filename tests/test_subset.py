@@ -15,7 +15,12 @@ from pathlib import Path
 import pytest
 
 from terra_incognita.data.coco_to_yolo import CocoDataset
-from terra_incognita.data.subset import SamplingConfig, sample_subset, write_subset_coco
+from terra_incognita.data.subset import (
+    SamplingConfig,
+    sample_subset,
+    split_selected_by_location,
+    write_subset_coco,
+)
 from tests.fixtures.synthetic import generate_synthetic_dataset
 
 
@@ -161,6 +166,28 @@ def test_missing_location_on_a_selected_image_is_rejected():
     )
     with pytest.raises(ValueError, match="no camera location"):
         sample_subset(dataset, SamplingConfig(min_per_class=10))
+
+
+# ---------------------------------------------------------------------------
+# 4b. split_selected_by_location — the train-time split re-derived from the subset COCO.
+# ---------------------------------------------------------------------------
+def test_split_selected_by_location_is_deterministic_disjoint_and_total():
+    # All images are "selected" here (this is the subset COCO at train time). The split must
+    # cover every image, use only train/val, and keep train/val cameras disjoint.
+    dataset = _make_dataset(nonempty_per_class={1: 10, 2: 8}, num_empty=10, num_locations=5)
+    config = SamplingConfig(seed=42, val_location_fraction=0.4)
+
+    first = split_selected_by_location(dataset, config)
+    second = split_selected_by_location(dataset, config)
+    assert first == second  # deterministic for a fixed seed
+
+    assert set(first) == {img.id for img in dataset.images}  # every image assigned
+    assert set(first.values()) == {"train", "val"}  # both splits populated
+
+    images_by_id = {img.id: img for img in dataset.images}
+    train_locs = {images_by_id[i].location for i, s in first.items() if s == "train"}
+    val_locs = {images_by_id[i].location for i, s in first.items() if s == "val"}
+    assert train_locs.isdisjoint(val_locs)
 
 
 # ---------------------------------------------------------------------------

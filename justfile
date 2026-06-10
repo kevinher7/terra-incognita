@@ -127,3 +127,17 @@ train-smoke:
 # asserting xyxy absolute-pixel boxes, the real COCO category_id join key, and conf honored (slice 6).
 serve-smoke:
     uv run --extra ml python scripts/serve_smoke.py
+
+# --- real Caltech data run (one-time, NOT in CI) ----------------------------
+# Slice 8 step 1 (needs `just up` + `just sync-ml`): download the real LILA Caltech Camera Traps
+# bbox annotations + the ~5K selected images, sample the seeded stratified location-split subset,
+# upload it to S3 (floci), and register it in the `datasets` experiment. Heavy (a few GB of
+# images, cached in data/); prints the version to pin into configs/cct_real.yaml.
+real-dataset:
+    uv run --extra ml python scripts/real_dataset.py
+
+# Slice 8 step 2 (needs the registered dataset + `just up` + `just sync-ml`): materialize
+# cct-subset from its s3_uri, train configs/cct_real.yaml on MPS, register a real @champion with
+# provenance + metrics, emit the training.run wide event, and serve-check it on a held-out image.
+real-train config="configs/cct_real.yaml":
+    uv run --extra ml python scripts/real_train.py --config {{config}}
