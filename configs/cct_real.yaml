@@ -1,0 +1,24 @@
+# The first REAL experiment (issue #8): a genuine @champion trained locally on MPS from the
+# real Caltech Camera Traps subset. Like configs/baseline.yaml this file IS the experiment —
+# committed, diffable, pointed at explicitly:
+#   just real-train                       # uses this file by default
+# Keys are validated against ExperimentConfig (typos fail loudly).
+#
+# One-time flow (see README "Real data run"):
+#   1. `just real-dataset`  -> registers the `cct-subset` version in the `datasets` experiment
+#   2. pin `dataset_version` below to the version it printed (e.g. "v1")
+#   3. `just real-train`    -> trains, registers @champion, emits the training.run wide event
+
+model_arch: yolov8n.pt   # deliberately nano + weak — the dashboard needs failure modes
+# epochs is the time/quality dial (accuracy is a non-goal). 30 nano epochs on a ~5K subset is
+# ~1–2h on Apple Silicon (MPS); raise it for a stronger champion, lower it for a faster smoke.
+epochs: 30
+imgsz: 640
+batch: 16
+seed: 42
+
+# MUST be pinned to the version `just real-dataset` registered before `just real-train` runs;
+# it is what makes the run reproducible (which data) and is the shared join key across MLflow
+# and the training.run wide event. Left null so an unpinned run fails loudly rather than
+# silently training on nothing.
+dataset_version: "v1"

@@ -43,6 +43,7 @@ __all__ = [
     "SamplingConfig",
     "SubsetResult",
     "sample_subset",
+    "split_selected_by_location",
     "write_subset_coco",
 ]
 
@@ -156,6 +157,33 @@ def sample_subset(dataset: CocoDataset, config: SamplingConfig | None = None) ->
         val_locations=val_locations,
         config=config,
     )
+
+
+def split_selected_by_location(
+    dataset: CocoDataset, config: SamplingConfig | None = None
+) -> dict[str, Split]:
+    """Deterministic location-disjoint train/val split over **all** images of ``dataset``.
+
+    The registered dataset deliberately carries **no split** in S3 (dataset-conventions.md:
+    the split is a *training* input, not part of the dataset version). So the training step
+    re-derives it here from the subset COCO — which carries ``location`` on every image — with
+    a fresh seeded RNG. That keeps local/GPU parity (any box materializing the dataset from
+    its ``s3_uri`` recomputes the same split) and yields the location-disjoint split the
+    deliverable wants, instead of the placeholder fraction split (:func:`split_by_fraction`).
+
+    Reuses the same private splitter as :func:`sample_subset`, so the two cannot drift; the
+    split is not *identical* to the one computed inside ``sample_subset`` (whose RNG was also
+    consumed by the per-class/empty sampling) — only deterministic and location-disjoint,
+    which is all training needs.
+    """
+    config = config or SamplingConfig()
+    rng = random.Random(config.seed)
+    images_by_id = {img.id: img for img in dataset.images}
+    selected_ids = sorted(images_by_id)
+    image_splits, _train_locations, _val_locations = _split_by_location(
+        selected_ids, images_by_id, config.val_location_fraction, rng
+    )
+    return image_splits
 
 
 def _target_empty_count(n_nonempty: int, target_ratio: float, available: int) -> int:

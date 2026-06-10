@@ -97,3 +97,40 @@ the GPU box for the **same** experiment?"*
 
   Define a new experiment by **copying** `configs/baseline.yaml`, not by editing `.env`.
   Unknown/typo'd keys in a config fail loudly.
+
+## Real data run (one-time) — produce a genuine `@champion`
+
+Slices 1–7 prove the whole pipeline on synthetic fixtures in CI. Slice 8 points the *same*
+machine at the real [Caltech Camera Traps](https://lila.science/datasets/caltech-camera-traps)
+set (LILA, public, no auth) to register a real dataset version and train the first real
+champion. It is **heavy and not in CI** (a ~38 MB annotation download + a few GB of images,
+cached in the gitignored `data/`, then a ~1–2 h MPS train). Run it against the local stack:
+
+```sh
+just up && just sync-ml          # stack + heavy ML deps
+just real-dataset                # download → clean → sample ~5K subset → upload to S3 → register
+#   → prints the registered version (e.g. "v1"); pin it:
+#   edit configs/cct_real.yaml → dataset_version: "v1"
+just real-train                  # materialize from S3 → MPS train → register @champion → wide event
+just serve                       # serve the @champion; POST a base64 real image to /invocations
+```
+
+What each step honors:
+
+- **`just real-dataset`** (`scripts/real_dataset.py`) downloads `caltech_bboxes_20200316.json`,
+  drops the bbox-less "empty" markers so empty images become background frames
+  (`clean_bbox_coco`), runs the seeded stratified **location-disjoint** sampler (~5K images,
+  ~25% empty), pulls **only the selected images** per-image from LILA's unzipped folder, uploads
+  the subset + COCO to S3 (floci), and registers one run in the `datasets` experiment
+  ([`dataset-conventions.md`](./.plans/contracts/dataset-conventions.md)). `min_per_class` in the
+  script is the subset-size lever.
+- **`just real-train`** (`scripts/real_train.py`) discovers that dataset the dashboard's way
+  (`search_runs(experiment_names=["datasets"])`), materializes it from `s3_uri`, re-derives the
+  location split, trains `configs/cct_real.yaml`, registers a real `cct-detector@champion` with
+  provenance + mAP/precision/recall, emits the `training.run` wide event (queryable in SigNoz),
+  and serve-checks the champion on a held-out **real** image.
+
+> **Staging/prod is the deferred infra step.** This run targets the *local* stack; reaching a
+> staging S3 + an EC2-served champion needs only env changes (`MLFLOW_TRACKING_URI`,
+> `MLFLOW_S3_ENDPOINT_URL`) then `just package` (build-docker) → ECR → container — **no code
+> changes** (PLAN §7b/§9; infra PLAN I1–I4/I7).

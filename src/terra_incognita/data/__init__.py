@@ -20,6 +20,13 @@ from terra_incognita.data.coco_to_yolo import (
     normalize_bbox,
     split_by_fraction,
 )
+from terra_incognita.data.lila import (
+    CCT_BBOX_FILENAME,
+    CCT_BBOX_URL,
+    CCT_IMAGE_BASE_URL,
+    clean_bbox_coco,
+    image_url,
+)
 from terra_incognita.data.registration import (
     COCO_ARTIFACT_FILENAME,
     DATASETS_EXPERIMENT,
@@ -33,10 +40,14 @@ from terra_incognita.data.subset import (
     SamplingConfig,
     SubsetResult,
     sample_subset,
+    split_selected_by_location,
     write_subset_coco,
 )
 
 __all__ = [
+    "CCT_BBOX_FILENAME",
+    "CCT_BBOX_URL",
+    "CCT_IMAGE_BASE_URL",
     "COCO_ARTIFACT_FILENAME",
     "DATASETS_EXPERIMENT",
     "CategoryIndex",
@@ -51,13 +62,16 @@ __all__ = [
     "SubsetResult",
     "YoloLabel",
     "build_dataset_tags",
+    "clean_bbox_coco",
     "coco_annotation_key",
     "convert_coco_to_yolo",
     "dataset_s3_prefix",
     "dataset_s3_uri",
+    "image_url",
     "load_category_index",
     "normalize_bbox",
     "sample_subset",
     "split_by_fraction",
+    "split_selected_by_location",
     "write_subset_coco",
 ]
