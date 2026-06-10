@@ -21,4 +21,4 @@ seed: 42
 # it is what makes the run reproducible (which data) and is the shared join key across MLflow
 # and the training.run wide event. Left null so an unpinned run fails loudly rather than
 # silently training on nothing.
-dataset_version: null
+dataset_version: "v1"
